@@ -7,8 +7,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'StockEasy - Simple Inventory for Sierra Leone SMEs',
+  description: 'Easy inventory management for small businesses in Sierra Leone. Track products, manage stock, record sales.',
   generator: 'v0.app',
   icons: {
     icon: [
