@@ -36,23 +36,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { name, quantity, unitPrice, lowStockThreshold, categoryId } = await request.json()
+    const { name, quantity, unitPrice, lowStockThreshold, categoryId, imageUrl } = await request.json()
 
     if (!name) {
       return NextResponse.json({ error: 'Product name is required' }, { status: 400 })
     }
 
     const result = await sql`
-      INSERT INTO products (user_id, category_id, name, quantity, unit_price, low_stock_threshold)
+      INSERT INTO products (user_id, category_id, name, quantity, unit_price, low_stock_threshold, image_url)
       VALUES (
         ${session.userId}, 
         ${categoryId || null}, 
         ${name}, 
         ${quantity || 0}, 
         ${unitPrice || 0},
-        ${lowStockThreshold || 5}
+        ${lowStockThreshold || 5},
+        ${imageUrl || null}
       )
-      RETURNING id, name, quantity, unit_price, low_stock_threshold, created_at
+      RETURNING id, name, quantity, unit_price, low_stock_threshold, image_url, created_at
     `
 
     return NextResponse.json({ product: result[0] })

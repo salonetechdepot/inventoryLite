@@ -48,7 +48,7 @@ export async function PATCH(
     }
 
     const { id } = await params
-    const { name, quantity, unitPrice, lowStockThreshold, categoryId } = await request.json()
+    const { name, quantity, unitPrice, lowStockThreshold, categoryId, imageUrl } = await request.json()
 
     const result = await sql`
       UPDATE products 
@@ -58,9 +58,10 @@ export async function PATCH(
         unit_price = COALESCE(${unitPrice}, unit_price),
         low_stock_threshold = COALESCE(${lowStockThreshold}, low_stock_threshold),
         category_id = COALESCE(${categoryId}, category_id),
+        image_url = ${imageUrl},
         updated_at = NOW()
       WHERE id = ${id} AND user_id = ${session.userId}
-      RETURNING id, name, quantity, unit_price, low_stock_threshold, updated_at
+      RETURNING id, name, quantity, unit_price, low_stock_threshold, image_url, updated_at
     `
 
     if (result.length === 0) {

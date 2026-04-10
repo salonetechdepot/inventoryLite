@@ -12,6 +12,7 @@ import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ImageUpload } from "@/components/image-upload"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
@@ -22,6 +23,7 @@ interface Product {
   unit_price: number
   low_stock_threshold: number
   category_id: string | null
+  image_url: string | null
 }
 
 interface Category {
@@ -46,6 +48,7 @@ export default function EditProductPage() {
   const [unitPrice, setUnitPrice] = useState("")
   const [lowStockThreshold, setLowStockThreshold] = useState("")
   const [categoryId, setCategoryId] = useState("")
+  const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -60,6 +63,7 @@ export default function EditProductPage() {
       setUnitPrice(p.unit_price.toString())
       setLowStockThreshold(p.low_stock_threshold.toString())
       setCategoryId(p.category_id || "")
+      setImageUrl(p.image_url || undefined)
     }
   }, [productData])
 
@@ -84,6 +88,7 @@ export default function EditProductPage() {
           unitPrice: parseFloat(unitPrice) || 0,
           lowStockThreshold: parseInt(lowStockThreshold) || 5,
           categoryId: categoryId || null,
+          imageUrl: imageUrl || null,
         }),
       })
 
@@ -173,6 +178,12 @@ export default function EditProductPage() {
                   {error}
                 </div>
               )}
+
+              <Field>
+                <FieldLabel className="text-base">Product Photo</FieldLabel>
+                <ImageUpload value={imageUrl} onChange={setImageUrl} />
+                <FieldDescription>Take a photo or upload an image</FieldDescription>
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="name" className="text-base">Product Name *</FieldLabel>
