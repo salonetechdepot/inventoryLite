@@ -33,10 +33,12 @@ export async function POST(request: NextRequest) {
     const filename = `products/${session.userId}/${Date.now()}.${extension}`
 
     const blob = await put(filename, file, {
-      access: 'public',
+      access: 'private',
     })
 
-    return NextResponse.json({ url: blob.url })
+    // Return the pathname instead of the URL for private blobs
+    // The pathname will be used with the /api/file route to deliver the image
+    return NextResponse.json({ url: `/api/file?pathname=${encodeURIComponent(blob.pathname)}` })
   } catch (error) {
     console.error('Upload error:', error)
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
