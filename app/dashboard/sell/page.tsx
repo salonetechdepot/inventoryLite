@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Empty } from "@/components/ui/empty"
+import { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyHeader } from "@/components/ui/empty"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
@@ -125,18 +125,19 @@ export default function SellPage() {
         </div>
       ) : filteredProducts.length === 0 ? (
         <Empty className="mt-12">
-          <Empty.Icon>
-            <Package className="size-12" />
-          </Empty.Icon>
-          <Empty.Title>
-            {search ? "No products found" : "No products available to sell"}
-          </Empty.Title>
-          <Empty.Description>
-            {search 
-              ? "Try a different search term"
-              : "Add products first or restock items that are out of stock"
-            }
-          </Empty.Description>
+          <EmptyMedia>
+            <Package className="size-12 text-muted-foreground" />
+          </EmptyMedia>
+          <EmptyHeader>
+            <EmptyTitle>
+              {search ? "No products found" : "No products available to sell"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {search
+                ? "Try a different search term"
+                : "Add products first or restock items that are out of stock"}
+            </EmptyDescription>
+          </EmptyHeader>
         </Empty>
       ) : (
         <div className="flex flex-col gap-3">

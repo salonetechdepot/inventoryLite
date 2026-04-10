@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ProductCard } from "@/components/product-card"
-import { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
+import { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent, EmptyHeader } from "@/components/ui/empty"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
@@ -75,27 +75,28 @@ export default function ProductsPage() {
         </div>
       ) : filteredProducts.length === 0 ? (
         <Empty className="mt-12">
-          <Empty.Icon>
-            <Package className="size-12" />
-          </Empty.Icon>
-          <Empty.Title>
-            {search ? "No products found" : "No products yet"}
-          </Empty.Title>
-          <Empty.Description>
-            {search 
-              ? "Try a different search term"
-              : "Add your first product to start tracking inventory"
-            }
-          </Empty.Description>
+          <EmptyMedia>
+            <Package className="size-12 text-muted-foreground" />
+          </EmptyMedia>
+          <EmptyHeader>
+            <EmptyTitle>
+              {search ? "No products found" : "No products yet"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {search
+                ? "Try a different search term"
+                : "Add your first product to start tracking inventory"}
+            </EmptyDescription>
+          </EmptyHeader>
           {!search && (
-            <Empty.Actions>
+            <EmptyContent>
               <Button asChild size="lg">
                 <Link href="/dashboard/products/new">
                   <Plus className="mr-2 size-5" />
                   Add First Product
                 </Link>
               </Button>
-            </Empty.Actions>
+            </EmptyContent>
           )}
         </Empty>
       ) : (
