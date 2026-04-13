@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react"
 import useSWR from "swr"
-import { Search, ShoppingCart, Check, Minus, Plus, Package, Trash2, ScanLine, X, Printer } from "lucide-react"
+import { Search, ShoppingCart, Check, Minus, Plus, Package, Trash2, ScanLine, X, Printer, AlertTriangle } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -53,15 +53,18 @@ export default function SellPage() {
   const [lastSale, setLastSale] = useState<{ items: SaleRecord[]; total: number; date: Date } | null>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [scannerError, setScannerError] = useState("")
+  const [showOversellConfirm, setShowOversellConfirm] = useState(false)
+  const [oversellProduct, setOversellProduct] = useState<Product | null>(null)
+  const [oversellQty, setOversellQty] = useState(1)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
   const { data, isLoading, mutate } = useSWR<{ products: Product[] }>("/api/products", fetcher)
 
   const products = data?.products || []
-  const availableProducts = products.filter((p) => p.quantity > 0)
   
-  const filteredProducts = availableProducts.filter((product) =>
+  // Show all products (including out of stock) so sellers can oversell if needed
+  const filteredProducts = products.filter((product) =>
     product.name.toLowerCase().includes(search.toLowerCase())
   )
 
@@ -75,34 +78,75 @@ export default function SellPage() {
     return product.quantity - (cartItem?.quantity || 0)
   }
 
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product, forceQuantity?: number) => {
+    const quantity = forceQuantity || 1
     const remaining = getRemainingStock(product)
-    if (remaining <= 0) return
+    
+    // If trying to add more than available and not forced, show confirmation
+    if (remaining <= 0 && !forceQuantity) {
+      setOversellProduct(product)
+      setOversellQty(1)
+      setShowOversellConfirm(true)
+      return
+    }
 
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id)
       if (existing) {
         return prev.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity: item.quantity + quantity }
             : item
         )
       }
-      return [...prev, { product, quantity: 1 }]
+      return [...prev, { product, quantity }]
     })
   }
 
-  const updateCartQuantity = (productId: string, delta: number) => {
+  const confirmOversell = () => {
+    if (oversellProduct) {
+      setCart((prev) => {
+        const existing = prev.find((item) => item.product.id === oversellProduct.id)
+        if (existing) {
+          return prev.map((item) =>
+            item.product.id === oversellProduct.id
+              ? { ...item, quantity: item.quantity + oversellQty }
+              : item
+          )
+        }
+        return [...prev, { product: oversellProduct, quantity: oversellQty }]
+      })
+    }
+    setShowOversellConfirm(false)
+    setOversellProduct(null)
+    setOversellQty(1)
+  }
+
+  const updateCartQuantity = (productId: string, delta: number, force?: boolean) => {
+    const cartItem = cart.find((item) => item.product.id === productId)
+    if (!cartItem) return
+    
+    const newQty = cartItem.quantity + delta
+    if (newQty <= 0) {
+      removeFromCart(productId)
+      return
+    }
+    
+    // Check if going over stock
+    if (newQty > cartItem.product.quantity && delta > 0 && !force) {
+      setOversellProduct(cartItem.product)
+      setOversellQty(1)
+      setShowOversellConfirm(true)
+      return
+    }
+    
     setCart((prev) => {
       return prev.map((item) => {
         if (item.product.id === productId) {
-          const newQty = item.quantity + delta
-          if (newQty <= 0) return item
-          if (newQty > item.product.quantity) return item
           return { ...item, quantity: newQty }
         }
         return item
-      }).filter((item) => item.quantity > 0)
+      })
     })
   }
 
@@ -200,11 +244,11 @@ export default function SellPage() {
     const trimmedCode = code.trim().toLowerCase()
     if (!trimmedCode) return
     
-    const matchedProduct = availableProducts.find(
+    const matchedProduct = products.find(
       (p) => p.name.toLowerCase().includes(trimmedCode) || p.id.includes(trimmedCode)
     )
     
-    if (matchedProduct && getRemainingStock(matchedProduct) > 0) {
+    if (matchedProduct) {
       addToCart(matchedProduct)
       setSearch("")
     }
@@ -288,7 +332,6 @@ export default function SellPage() {
                       size="icon"
                       className="size-8"
                       onClick={() => updateCartQuantity(item.product.id, 1)}
-                      disabled={item.quantity >= item.product.quantity}
                     >
                       <Plus className="size-4" />
                     </Button>
@@ -355,7 +398,7 @@ export default function SellPage() {
                   "cursor-pointer transition-all active:scale-[0.98]",
                   inCart && "ring-2 ring-primary bg-primary/5"
                 )}
-                onClick={() => remaining > 0 && addToCart(product)}
+                onClick={() => addToCart(product)}
               >
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
@@ -520,6 +563,68 @@ export default function SellPage() {
               Done
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Oversell Confirmation Dialog */}
+      <Dialog open={showOversellConfirm} onOpenChange={setShowOversellConfirm}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-warning/20">
+              <AlertTriangle className="size-8 text-warning" />
+            </div>
+            <DialogTitle className="text-center">Sell More Than Stock?</DialogTitle>
+            <DialogDescription className="text-center">
+              {oversellProduct && (
+                <>
+                  <span className="font-semibold text-foreground">{oversellProduct.name}</span>
+                  {" "}only has{" "}
+                  <span className="font-semibold text-destructive">{oversellProduct.quantity}</span>
+                  {" "}in stock. How many do you want to sell?
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex items-center justify-center gap-4 py-4">
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-12"
+              onClick={() => setOversellQty(Math.max(1, oversellQty - 1))}
+            >
+              <Minus className="size-5" />
+            </Button>
+            <span className="text-3xl font-bold w-16 text-center tabular-nums">{oversellQty}</span>
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-12"
+              onClick={() => setOversellQty(oversellQty + 1)}
+            >
+              <Plus className="size-5" />
+            </Button>
+          </div>
+          
+          <p className="text-center text-sm text-muted-foreground">
+            Stock will go negative. Make sure you have the items!
+          </p>
+          
+          <DialogFooter className="flex gap-2 sm:gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowOversellConfirm(false)} 
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={confirmOversell}
+              className="flex-1 bg-warning text-warning-foreground hover:bg-warning/90"
+            >
+              Yes, Sell {oversellQty}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </main>

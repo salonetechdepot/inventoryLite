@@ -39,16 +39,11 @@ export async function POST(request: Request) {
     // Create a map for easy lookup
     const productMap = new Map(products.map(p => [p.id, p]))
 
-    // Validate stock for all items
+    // Validate products exist (allow overselling - stock can go negative)
     for (const item of items) {
       const product = productMap.get(item.productId)
       if (!product) {
         return NextResponse.json({ error: `Product not found: ${item.productId}` }, { status: 404 })
-      }
-      if ((product.quantity as number) < item.quantity) {
-        return NextResponse.json({ 
-          error: `Not enough stock for ${product.name}. Only ${product.quantity} available.` 
-        }, { status: 400 })
       }
     }
 
