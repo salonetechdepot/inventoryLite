@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Minus, Plus, Edit } from "lucide-react"
+import { Minus, Plus, Edit, Package } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +16,7 @@ interface Product {
   low_stock_threshold: number
   category_name: string | null
   category_icon: string | null
+  image_url: string | null
 }
 
 function formatPrice(amount: number) {
@@ -71,6 +72,20 @@ export function ProductCard({
     )}>
       <CardContent className="p-4">
         <div className="flex items-start gap-4">
+          {/* Product Image */}
+          <div className="size-16 rounded-lg bg-muted flex items-center justify-center overflow-hidden shrink-0">
+            {product.image_url ? (
+              <img 
+                src={product.image_url} 
+                alt={product.name}
+                className="size-full object-cover"
+                crossOrigin="anonymous"
+              />
+            ) : (
+              <Package className="size-8 text-muted-foreground" />
+            )}
+          </div>
+          
           {/* Product Info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">

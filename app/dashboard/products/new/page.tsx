@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ImageUpload } from "@/components/image-upload"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
@@ -28,6 +29,7 @@ export default function NewProductPage() {
   const [unitPrice, setUnitPrice] = useState("")
   const [lowStockThreshold, setLowStockThreshold] = useState("5")
   const [categoryId, setCategoryId] = useState("")
+  const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
@@ -54,6 +56,7 @@ export default function NewProductPage() {
           unitPrice: parseFloat(unitPrice) || 0,
           lowStockThreshold: parseInt(lowStockThreshold) || 5,
           categoryId: categoryId || null,
+          imageUrl: imageUrl || null,
         }),
       })
 
@@ -100,6 +103,12 @@ export default function NewProductPage() {
                   {error}
                 </div>
               )}
+
+              <Field>
+                <FieldLabel className="text-base">Product Photo</FieldLabel>
+                <ImageUpload value={imageUrl} onChange={setImageUrl} />
+                <FieldDescription>Take a photo or upload an image</FieldDescription>
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="name" className="text-base">Product Name *</FieldLabel>
