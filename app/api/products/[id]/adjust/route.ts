@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 // POST adjust stock quantity (add or subtract)
 export async function POST(
@@ -21,26 +21,32 @@ export async function POST(
     }
 
     // First check if product exists and belongs to user
-    const existing = await sql`
-      SELECT quantity FROM products 
-      WHERE id = ${id} AND user_id = ${session.userId}
-    `
+    const existing = await prisma.product.findFirst({
+      where: { id, userId: session.userId },
+      select: { quantity: true, name: true }
+    })
 
-    if (existing.length === 0) {
+    if (!existing) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    const currentQty = existing[0].quantity as number
+    const currentQty = existing.quantity ?? 0
     const newQty = Math.max(0, currentQty + adjustment) // Prevent negative stock
 
-    const result = await sql`
-      UPDATE products 
-      SET quantity = ${newQty}, updated_at = NOW()
-      WHERE id = ${id} AND user_id = ${session.userId}
-      RETURNING id, name, quantity
-    `
+    const product = await prisma.product.update({
+      where: { id },
+      data: {
+        quantity: newQty,
+        updatedAt: new Date()
+      },
+      select: {
+        id: true,
+        name: true,
+        quantity: true
+      }
+    })
 
-    return NextResponse.json({ product: result[0] })
+    return NextResponse.json({ product })
   } catch (error) {
     console.error('Adjust stock error:', error)
     return NextResponse.json({ error: 'Failed to adjust stock' }, { status: 500 })

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 export async function GET() {
   try {
@@ -9,57 +9,70 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get total products count
-    const productsResult = await sql`
-      SELECT COUNT(*) as total FROM products WHERE user_id = ${session.userId}
-    `
+    const [
+      products,
+      todaySales,
+      lowStockProductsRaw
+    ] = await Promise.all([
+      prisma.product.findMany({
+        where: { userId: session.userId },
+        select: {
+          id: true,
+          name: true,
+          quantity: true,
+          lowStockThreshold: true,
+          unitPrice: true
+        }
+      }),
+      prisma.sale.findMany({
+        where: {
+          userId: session.userId,
+          createdAt: {
+            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+            lte: new Date(new Date().setHours(23, 59, 59, 999))
+          }
+        },
+        select: {
+          totalAmount: true
+        }
+      }),
+      prisma.product.findMany({
+        where: { userId: session.userId },
+        orderBy: { quantity: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          quantity: true,
+          lowStockThreshold: true
+        }
+      })
+    ])
 
-    // Get low stock products count
-    const lowStockResult = await sql`
-      SELECT COUNT(*) as total FROM products 
-      WHERE user_id = ${session.userId} AND quantity <= low_stock_threshold
-    `
+    const lowStockProducts = lowStockProductsRaw
+      .filter((product) => (product.quantity ?? 0) <= (product.lowStockThreshold ?? 0))
+      .slice(0, 5)
+      .map((product) => ({
+        id: product.id,
+        name: product.name,
+        quantity: product.quantity ?? 0,
+        low_stock_threshold: product.lowStockThreshold ?? 0
+      }))
 
-    // Get out of stock products count
-    const outOfStockResult = await sql`
-      SELECT COUNT(*) as total FROM products 
-      WHERE user_id = ${session.userId} AND quantity = 0
-    `
-
-    // Get total inventory value
-    const valueResult = await sql`
-      SELECT COALESCE(SUM(quantity * unit_price), 0) as total 
-      FROM products WHERE user_id = ${session.userId}
-    `
-
-    // Get today's sales count and total
-    const today = new Date().toISOString().split('T')[0]
-    const salesResult = await sql`
-      SELECT 
-        COUNT(*) as count,
-        COALESCE(SUM(total_amount), 0) as total
-      FROM sales 
-      WHERE user_id = ${session.userId} 
-      AND DATE(created_at) = ${today}
-    `
-
-    // Get low stock products list
-    const lowStockProducts = await sql`
-      SELECT id, name, quantity, low_stock_threshold
-      FROM products 
-      WHERE user_id = ${session.userId} AND quantity <= low_stock_threshold
-      ORDER BY quantity ASC
-      LIMIT 5
-    `
+    const totalProducts = products.length
+    const lowStockCount = products.filter((p) => (p.quantity ?? 0) <= (p.lowStockThreshold ?? 0)).length
+    const outOfStockCount = products.filter((p) => (p.quantity ?? 0) === 0).length
+    const inventoryValue = products.reduce((sum, p) => sum + (p.quantity ?? 0) * Number(p.unitPrice ?? 0), 0)
+    const todaySalesCount = todaySales.length
+    const todaySalesTotal = todaySales.reduce((sum, s) => sum + Number(s.totalAmount), 0)
 
     return NextResponse.json({
       stats: {
-        totalProducts: Number(productsResult[0].total),
-        lowStockCount: Number(lowStockResult[0].total),
-        outOfStockCount: Number(outOfStockResult[0].total),
-        inventoryValue: Number(valueResult[0].total),
-        todaySalesCount: Number(salesResult[0].count),
-        todaySalesTotal: Number(salesResult[0].total),
+        totalProducts,
+        lowStockCount,
+        outOfStockCount,
+        inventoryValue,
+        todaySalesCount,
+        todaySalesTotal,
       },
       lowStockProducts
     })

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 export async function GET() {
   try {
@@ -10,116 +10,89 @@ export async function GET() {
     }
 
     const userId = session.userId
+    const now = new Date()
+    const startOfToday = new Date(now)
+    startOfToday.setHours(0, 0, 0, 0)
+    const startOfWeek = new Date(now)
+    startOfWeek.setDate(now.getDate() - 7)
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
-    // === REVENUE METRICS ===
-    
-    // Today's revenue
-    const today = new Date().toISOString().split('T')[0]
-    const todayResult = await sql`
-      SELECT 
-        COUNT(*) as count,
-        COALESCE(SUM(total_amount), 0) as total
-      FROM sales 
-      WHERE user_id = ${userId} 
-      AND DATE(created_at) = ${today}
-    `
+    const [allSales, products] = await Promise.all([
+      prisma.sale.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          productName: true,
+          quantitySold: true,
+          unitPriceAtSale: true,
+          totalAmount: true,
+          createdAt: true
+        }
+      }),
+      prisma.product.findMany({
+        where: { userId },
+        include: {
+          category: {
+            select: { name: true }
+          }
+        }
+      })
+    ])
 
-    // This week's revenue (last 7 days)
-    const weekResult = await sql`
-      SELECT 
-        COUNT(*) as count,
-        COALESCE(SUM(total_amount), 0) as total
-      FROM sales 
-      WHERE user_id = ${userId} 
-      AND created_at >= NOW() - INTERVAL '7 days'
-    `
+    const sumSales = (sales: typeof allSales) => sales.reduce((sum, s) => sum + Number(s.totalAmount), 0)
+    const todaySales = allSales.filter((s) => (s.createdAt ?? new Date(0)) >= startOfToday)
+    const weekSales = allSales.filter((s) => (s.createdAt ?? new Date(0)) >= startOfWeek)
+    const monthSales = allSales.filter((s) => (s.createdAt ?? new Date(0)) >= startOfMonth)
 
-    // This month's revenue
-    const monthResult = await sql`
-      SELECT 
-        COUNT(*) as count,
-        COALESCE(SUM(total_amount), 0) as total
-      FROM sales 
-      WHERE user_id = ${userId} 
-      AND created_at >= DATE_TRUNC('month', NOW())
-    `
+    const topProductMap = new Map<string, { name: string; totalQuantity: number; totalRevenue: number; saleCount: number }>()
+    for (const sale of allSales) {
+      const existing = topProductMap.get(sale.productName) ?? {
+        name: sale.productName,
+        totalQuantity: 0,
+        totalRevenue: 0,
+        saleCount: 0
+      }
+      existing.totalQuantity += sale.quantitySold
+      existing.totalRevenue += Number(sale.totalAmount)
+      existing.saleCount += 1
+      topProductMap.set(sale.productName, existing)
+    }
 
-    // All time revenue
-    const allTimeResult = await sql`
-      SELECT 
-        COUNT(*) as count,
-        COALESCE(SUM(total_amount), 0) as total
-      FROM sales 
-      WHERE user_id = ${userId}
-    `
+    const topProducts = [...topProductMap.values()]
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+      .slice(0, 10)
 
-    // === TOP SELLING PRODUCTS ===
-    const topProducts = await sql`
-      SELECT 
-        product_name,
-        SUM(quantity_sold) as total_quantity,
-        SUM(total_amount) as total_revenue,
-        COUNT(*) as sale_count
-      FROM sales 
-      WHERE user_id = ${userId}
-      GROUP BY product_name
-      ORDER BY total_quantity DESC
-      LIMIT 10
-    `
+    const dailyRevenueMap = new Map<string, { date: string; transactions: number; revenue: number }>()
+    for (const sale of weekSales) {
+      const dateKey = (sale.createdAt ?? new Date()).toISOString().split('T')[0]
+      const existing = dailyRevenueMap.get(dateKey) ?? { date: dateKey, transactions: 0, revenue: 0 }
+      existing.transactions += 1
+      existing.revenue += Number(sale.totalAmount)
+      dailyRevenueMap.set(dateKey, existing)
+    }
+    const dailyRevenue = [...dailyRevenueMap.values()].sort((a, b) => (a.date < b.date ? 1 : -1))
 
-    // === DAILY REVENUE (Last 7 days) ===
-    const dailyRevenue = await sql`
-      SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as transactions,
-        COALESCE(SUM(total_amount), 0) as revenue
-      FROM sales 
-      WHERE user_id = ${userId} 
-      AND created_at >= NOW() - INTERVAL '7 days'
-      GROUP BY DATE(created_at)
-      ORDER BY date DESC
-    `
+    const inventoryStats = {
+      total_products: products.length,
+      total_items: products.reduce((sum, p) => sum + (p.quantity ?? 0), 0),
+      total_value: products.reduce((sum, p) => sum + (p.quantity ?? 0) * Number(p.unitPrice ?? 0), 0),
+      low_stock: products.filter((p) => (p.quantity ?? 0) <= (p.lowStockThreshold ?? 0) && (p.quantity ?? 0) > 0).length,
+      out_of_stock: products.filter((p) => (p.quantity ?? 0) <= 0).length
+    }
 
-    // === INVENTORY METRICS ===
-    const inventoryStats = await sql`
-      SELECT 
-        COUNT(*) as total_products,
-        COALESCE(SUM(quantity), 0) as total_items,
-        COALESCE(SUM(quantity * unit_price), 0) as total_value,
-        COUNT(*) FILTER (WHERE quantity <= low_stock_threshold AND quantity > 0) as low_stock,
-        COUNT(*) FILTER (WHERE quantity <= 0) as out_of_stock
-      FROM products 
-      WHERE user_id = ${userId}
-    `
+    const categoryMap = new Map<string, { name: string; productCount: number; totalQuantity: number; totalValue: number }>()
+    for (const product of products) {
+      const categoryName = product.category?.name ?? 'Uncategorized'
+      const existing = categoryMap.get(categoryName) ?? { name: categoryName, productCount: 0, totalQuantity: 0, totalValue: 0 }
+      existing.productCount += 1
+      existing.totalQuantity += product.quantity ?? 0
+      existing.totalValue += (product.quantity ?? 0) * Number(product.unitPrice ?? 0)
+      categoryMap.set(categoryName, existing)
+    }
+    const categoryStats = [...categoryMap.values()].sort((a, b) => b.totalValue - a.totalValue)
 
-    // === CATEGORIES BREAKDOWN ===
-    const categoryStats = await sql`
-      SELECT 
-        COALESCE(c.name, 'Uncategorized') as category_name,
-        COUNT(p.id) as product_count,
-        COALESCE(SUM(p.quantity), 0) as total_quantity,
-        COALESCE(SUM(p.quantity * p.unit_price), 0) as total_value
-      FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.user_id = ${userId}
-      GROUP BY c.name
-      ORDER BY total_value DESC
-    `
-
-    // === RECENT SALES ===
-    const recentSales = await sql`
-      SELECT 
-        id,
-        product_name,
-        quantity_sold,
-        unit_price_at_sale,
-        total_amount,
-        created_at
-      FROM sales 
-      WHERE user_id = ${userId}
-      ORDER BY created_at DESC
-      LIMIT 20
-    `
+    const recentSales = allSales.slice(0, 20)
 
     // === PROFIT ESTIMATE (Revenue - Cost if available) ===
     // For now, we'll just show revenue since we don't track cost price
@@ -127,53 +100,49 @@ export async function GET() {
     return NextResponse.json({
       revenue: {
         today: {
-          amount: Number(todayResult[0].total),
-          transactions: Number(todayResult[0].count)
+          amount: sumSales(todaySales),
+          transactions: todaySales.length
         },
         week: {
-          amount: Number(weekResult[0].total),
-          transactions: Number(weekResult[0].count)
+          amount: sumSales(weekSales),
+          transactions: weekSales.length
         },
         month: {
-          amount: Number(monthResult[0].total),
-          transactions: Number(monthResult[0].count)
+          amount: sumSales(monthSales),
+          transactions: monthSales.length
         },
         allTime: {
-          amount: Number(allTimeResult[0].total),
-          transactions: Number(allTimeResult[0].count)
+          amount: sumSales(allSales),
+          transactions: allSales.length
         }
       },
-      topProducts: topProducts.map(p => ({
-        name: p.product_name,
-        quantitySold: Number(p.total_quantity),
-        revenue: Number(p.total_revenue),
-        saleCount: Number(p.sale_count)
+      topProducts: topProducts.map((p) => ({
+        name: p.name,
+        quantitySold: p.totalQuantity,
+        revenue: p.totalRevenue,
+        saleCount: p.saleCount
       })),
-      dailyRevenue: dailyRevenue.map(d => ({
-        date: d.date,
-        transactions: Number(d.transactions),
-        revenue: Number(d.revenue)
-      })),
+      dailyRevenue,
       inventory: {
-        totalProducts: Number(inventoryStats[0].total_products),
-        totalItems: Number(inventoryStats[0].total_items),
-        totalValue: Number(inventoryStats[0].total_value),
-        lowStock: Number(inventoryStats[0].low_stock),
-        outOfStock: Number(inventoryStats[0].out_of_stock)
+        totalProducts: inventoryStats.total_products,
+        totalItems: inventoryStats.total_items,
+        totalValue: inventoryStats.total_value,
+        lowStock: inventoryStats.low_stock,
+        outOfStock: inventoryStats.out_of_stock
       },
-      categories: categoryStats.map(c => ({
-        name: c.category_name,
-        productCount: Number(c.product_count),
-        totalQuantity: Number(c.total_quantity),
-        totalValue: Number(c.total_value)
+      categories: categoryStats.map((c) => ({
+        name: c.name,
+        productCount: c.productCount,
+        totalQuantity: c.totalQuantity,
+        totalValue: c.totalValue
       })),
-      recentSales: recentSales.map(s => ({
+      recentSales: recentSales.map((s) => ({
         id: s.id,
-        productName: s.product_name,
-        quantity: Number(s.quantity_sold),
-        unitPrice: Number(s.unit_price_at_sale),
-        total: Number(s.total_amount),
-        date: s.created_at
+        productName: s.productName,
+        quantity: s.quantitySold,
+        unitPrice: Number(s.unitPriceAtSale),
+        total: Number(s.totalAmount),
+        date: s.createdAt
       }))
     })
   } catch (error) {

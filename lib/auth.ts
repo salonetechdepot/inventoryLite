@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers'
 import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
-import { sql } from './db'
+import { prisma } from './prisma'
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'your-secret-key-change-in-production'
@@ -85,13 +85,24 @@ export async function getCurrentUser(): Promise<User | null> {
   const session = await getSession()
   if (!session) return null
   
-  const result = await sql`
-    SELECT id, email, business_name, created_at 
-    FROM users 
-    WHERE id = ${session.userId}
-  `
-  
-  return result[0] as User | undefined ?? null
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: {
+      id: true,
+      email: true,
+      businessName: true,
+      createdAt: true
+    }
+  })
+
+  if (!user) return null
+
+  return {
+    id: user.id,
+    email: user.email,
+    business_name: user.businessName,
+    created_at: user.createdAt ?? new Date()
+  }
 }
 
 // Logout (clear session)
@@ -108,31 +119,47 @@ export async function registerUser(
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   try {
     // Check if user exists
-    const existing = await sql`SELECT id FROM users WHERE email = ${email.toLowerCase()}`
-    if (existing.length > 0) {
+    const existing = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+      select: { id: true }
+    })
+    if (existing) {
       return { success: false, error: 'Email already registered' }
     }
     
     // Hash password and create user
     const passwordHash = await hashPassword(password)
-    const result = await sql`
-      INSERT INTO users (email, password_hash, business_name)
-      VALUES (${email.toLowerCase()}, ${passwordHash}, ${businessName})
-      RETURNING id, email, business_name, created_at
-    `
-    
-    const user = result[0] as User
+    const createdUser = await prisma.user.create({
+      data: {
+        email: email.toLowerCase(),
+        passwordHash,
+        businessName
+      },
+      select: {
+        id: true,
+        email: true,
+        businessName: true,
+        createdAt: true
+      }
+    })
+
+    const user: User = {
+      id: createdUser.id,
+      email: createdUser.email,
+      business_name: createdUser.businessName,
+      created_at: createdUser.createdAt ?? new Date()
+    }
     
     // Create default categories for the user
-    await sql`
-      INSERT INTO categories (user_id, name, icon, is_default)
-      VALUES 
-        (${user.id}, 'Food & Drinks', 'utensils', true),
-        (${user.id}, 'Electronics', 'smartphone', true),
-        (${user.id}, 'Clothing', 'shirt', true),
-        (${user.id}, 'Household', 'home', true),
-        (${user.id}, 'Other', 'package', true)
-    `
+    await prisma.category.createMany({
+      data: [
+        { userId: user.id, name: 'Food & Drinks', icon: 'utensils', isDefault: true },
+        { userId: user.id, name: 'Electronics', icon: 'smartphone', isDefault: true },
+        { userId: user.id, name: 'Clothing', icon: 'shirt', isDefault: true },
+        { userId: user.id, name: 'Household', icon: 'home', isDefault: true },
+        { userId: user.id, name: 'Other', icon: 'package', isDefault: true }
+      ]
+    })
     
     return { success: true, user }
   } catch (error) {
@@ -147,33 +174,42 @@ export async function loginUser(
   password: string
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   try {
-    const result = await sql`
-      SELECT id, email, password_hash, business_name, created_at 
-      FROM users 
-      WHERE email = ${email.toLowerCase()}
-    `
-    
-    if (result.length === 0) {
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        businessName: true,
+        createdAt: true
+      }
+    })
+
+    if (!user) {
       return { success: false, error: 'Invalid email or password' }
     }
     
-    const user = result[0] as User & { password_hash: string }
-    const isValid = await verifyPassword(password, user.password_hash)
+    const isValid = await verifyPassword(password, user.passwordHash)
     
     if (!isValid) {
       return { success: false, error: 'Invalid email or password' }
     }
     
     // Create session
-    await createSession(user)
+    await createSession({
+      id: user.id,
+      email: user.email,
+      business_name: user.businessName,
+      created_at: user.createdAt ?? new Date()
+    })
     
     return { 
       success: true, 
       user: {
         id: user.id,
         email: user.email,
-        business_name: user.business_name,
-        created_at: user.created_at
+        business_name: user.businessName,
+        created_at: user.createdAt ?? new Date()
       }
     }
   } catch (error) {

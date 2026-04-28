@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 interface SaleItem {
   productId: string
@@ -30,11 +30,18 @@ export async function POST(request: Request) {
 
     // Get all product details
     const productIds = items.map(item => item.productId)
-    const products = await sql`
-      SELECT id, name, quantity, unit_price 
-      FROM products 
-      WHERE id = ANY(${productIds}) AND user_id = ${session.userId}
-    `
+    const products = await prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        userId: session.userId
+      },
+      select: {
+        id: true,
+        name: true,
+        quantity: true,
+        unitPrice: true
+      }
+    })
 
     // Create a map for easy lookup
     const productMap = new Map(products.map(p => [p.id, p]))
@@ -51,24 +58,39 @@ export async function POST(request: Request) {
     const salesResults = []
     for (const item of items) {
       const product = productMap.get(item.productId)!
-      const unitPrice = product.unit_price as number
+      const unitPrice = Number(product.unitPrice ?? 0)
       const totalAmount = item.quantity * unitPrice
 
-      // Record sale
-      const saleResult = await sql`
-        INSERT INTO sales (user_id, product_id, product_name, quantity_sold, unit_price_at_sale, total_amount)
-        VALUES (${session.userId}, ${item.productId}, ${product.name}, ${item.quantity}, ${unitPrice}, ${totalAmount})
-        RETURNING id, product_name, quantity_sold, total_amount, created_at
-      `
+      // Record sale and update stock in a single transaction for consistency.
+      const [saleResult] = await prisma.$transaction([
+        prisma.sale.create({
+          data: {
+            userId: session.userId,
+            productId: item.productId,
+            productName: product.name,
+            quantitySold: item.quantity,
+            unitPriceAtSale: unitPrice,
+            totalAmount
+          }
+        }),
+        prisma.product.update({
+          where: { id: item.productId },
+          data: {
+            quantity: {
+              decrement: item.quantity
+            },
+            updatedAt: new Date()
+          }
+        })
+      ])
 
-      // Update product stock
-      await sql`
-        UPDATE products 
-        SET quantity = quantity - ${item.quantity}, updated_at = NOW()
-        WHERE id = ${item.productId}
-      `
-
-      salesResults.push(saleResult[0])
+      salesResults.push({
+        id: saleResult.id,
+        product_name: saleResult.productName,
+        quantity_sold: saleResult.quantitySold,
+        total_amount: Number(saleResult.totalAmount),
+        created_at: saleResult.createdAt
+      })
     }
 
     // Calculate total

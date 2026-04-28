@@ -18,6 +18,7 @@ interface Product {
   quantity: number
   unit_price: number
   low_stock_threshold: number
+  image_url: string | null
   category_name: string | null
   category_icon: string | null
 }

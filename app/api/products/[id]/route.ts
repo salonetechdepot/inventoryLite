@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 // GET single product
 export async function GET(
@@ -15,21 +15,39 @@ export async function GET(
 
     const { id } = await params
 
-    const result = await sql`
-      SELECT 
-        p.id, p.name, p.quantity, p.unit_price, p.low_stock_threshold,
-        p.image_url, p.created_at, p.updated_at,
-        c.id as category_id, c.name as category_name
-      FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.id = ${id} AND p.user_id = ${session.userId}
-    `
+    const product = await prisma.product.findFirst({
+      where: {
+        id,
+        userId: session.userId
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    })
 
-    if (result.length === 0) {
+    if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ product: result[0] })
+    return NextResponse.json({
+      product: {
+        id: product.id,
+        name: product.name,
+        quantity: product.quantity ?? 0,
+        unit_price: Number(product.unitPrice ?? 0),
+        low_stock_threshold: product.lowStockThreshold ?? 5,
+        image_url: product.imageUrl,
+        created_at: product.createdAt,
+        updated_at: product.updatedAt,
+        category_id: product.category?.id ?? null,
+        category_name: product.category?.name ?? null
+      }
+    })
   } catch (error) {
     console.error('Get product error:', error)
     return NextResponse.json({ error: 'Failed to fetch product' }, { status: 500 })
@@ -50,25 +68,38 @@ export async function PATCH(
     const { id } = await params
     const { name, quantity, unitPrice, lowStockThreshold, categoryId, imageUrl } = await request.json()
 
-    const result = await sql`
-      UPDATE products 
-      SET 
-        name = COALESCE(${name}, name),
-        quantity = COALESCE(${quantity}, quantity),
-        unit_price = COALESCE(${unitPrice}, unit_price),
-        low_stock_threshold = COALESCE(${lowStockThreshold}, low_stock_threshold),
-        category_id = COALESCE(${categoryId}, category_id),
-        image_url = ${imageUrl},
-        updated_at = NOW()
-      WHERE id = ${id} AND user_id = ${session.userId}
-      RETURNING id, name, quantity, unit_price, low_stock_threshold, image_url, updated_at
-    `
+    const existingProduct = await prisma.product.findFirst({
+      where: { id, userId: session.userId }
+    })
 
-    if (result.length === 0) {
+    if (!existingProduct) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ product: result[0] })
+    const product = await prisma.product.update({
+      where: { id },
+      data: {
+        name: name ?? undefined,
+        quantity: quantity ?? undefined,
+        unitPrice: unitPrice ?? undefined,
+        lowStockThreshold: lowStockThreshold ?? undefined,
+        categoryId: categoryId ?? undefined,
+        imageUrl: imageUrl ?? null,
+        updatedAt: new Date()
+      }
+    })
+
+    return NextResponse.json({
+      product: {
+        id: product.id,
+        name: product.name,
+        quantity: product.quantity ?? 0,
+        unit_price: Number(product.unitPrice ?? 0),
+        low_stock_threshold: product.lowStockThreshold ?? 5,
+        image_url: product.imageUrl,
+        updated_at: product.updatedAt
+      }
+    })
   } catch (error) {
     console.error('Update product error:', error)
     return NextResponse.json({ error: 'Failed to update product' }, { status: 500 })
@@ -88,15 +119,16 @@ export async function DELETE(
 
     const { id } = await params
 
-    const result = await sql`
-      DELETE FROM products 
-      WHERE id = ${id} AND user_id = ${session.userId}
-      RETURNING id
-    `
+    const existingProduct = await prisma.product.findFirst({
+      where: { id, userId: session.userId },
+      select: { id: true }
+    })
 
-    if (result.length === 0) {
+    if (!existingProduct) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
+
+    await prisma.product.delete({ where: { id } })
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 // GET all sales for current user
 export async function GET(request: Request) {
@@ -14,16 +14,24 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
 
-    const sales = await sql`
-      SELECT id, product_id, product_name, quantity_sold, unit_price_at_sale, total_amount, created_at
-      FROM sales
-      WHERE user_id = ${session.userId}
-      ORDER BY created_at DESC
-      LIMIT ${limit}
-      OFFSET ${offset}
-    `
+    const sales = await prisma.sale.findMany({
+      where: { userId: session.userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset
+    })
 
-    return NextResponse.json({ sales })
+    const formattedSales = sales.map((sale) => ({
+      id: sale.id,
+      product_id: sale.productId,
+      product_name: sale.productName,
+      quantity_sold: sale.quantitySold,
+      unit_price_at_sale: Number(sale.unitPriceAtSale),
+      total_amount: Number(sale.totalAmount),
+      created_at: sale.createdAt
+    }))
+
+    return NextResponse.json({ sales: formattedSales })
   } catch (error) {
     console.error('Get sales error:', error)
     return NextResponse.json({ error: 'Failed to fetch sales' }, { status: 500 })
@@ -45,20 +53,18 @@ export async function POST(request: Request) {
     }
 
     // Get product details
-    const productResult = await sql`
-      SELECT id, name, quantity, unit_price 
-      FROM products 
-      WHERE id = ${productId} AND user_id = ${session.userId}
-    `
+    const product = await prisma.product.findFirst({
+      where: { id: productId, userId: session.userId },
+      select: { id: true, name: true, quantity: true, unitPrice: true }
+    })
 
-    if (productResult.length === 0) {
+    if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    const product = productResult[0]
-    const currentStock = product.quantity as number
-    const unitPrice = product.unit_price as number
-    const productName = product.name as string
+    const currentStock = product.quantity ?? 0
+    const unitPrice = Number(product.unitPrice ?? 0)
+    const productName = product.name
 
     if (currentStock < quantity) {
       return NextResponse.json({ 
@@ -69,21 +75,36 @@ export async function POST(request: Request) {
     const totalAmount = quantity * unitPrice
 
     // Record sale
-    const saleResult = await sql`
-      INSERT INTO sales (user_id, product_id, product_name, quantity_sold, unit_price_at_sale, total_amount)
-      VALUES (${session.userId}, ${productId}, ${productName}, ${quantity}, ${unitPrice}, ${totalAmount})
-      RETURNING id, product_name, quantity_sold, total_amount, created_at
-    `
-
-    // Update product stock
-    await sql`
-      UPDATE products 
-      SET quantity = quantity - ${quantity}, updated_at = NOW()
-      WHERE id = ${productId}
-    `
+    const [saleResult] = await prisma.$transaction([
+      prisma.sale.create({
+        data: {
+          userId: session.userId,
+          productId,
+          productName,
+          quantitySold: quantity,
+          unitPriceAtSale: unitPrice,
+          totalAmount
+        }
+      }),
+      prisma.product.update({
+        where: { id: productId },
+        data: {
+          quantity: {
+            decrement: quantity
+          },
+          updatedAt: new Date()
+        }
+      })
+    ])
 
     return NextResponse.json({ 
-      sale: saleResult[0],
+      sale: {
+        id: saleResult.id,
+        product_name: saleResult.productName,
+        quantity_sold: saleResult.quantitySold,
+        total_amount: Number(saleResult.totalAmount),
+        created_at: saleResult.createdAt
+      },
       newStock: currentStock - quantity
     })
   } catch (error) {

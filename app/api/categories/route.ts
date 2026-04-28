@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { sql } from '@/lib/db'
+import { prisma } from '@/lib/prisma'
 
 // GET all categories for current user
 export async function GET() {
@@ -10,14 +10,20 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const categories = await sql`
-      SELECT id, name, icon, is_default, created_at
-      FROM categories
-      WHERE user_id = ${session.userId}
-      ORDER BY is_default DESC, name ASC
-    `
+    const categories = await prisma.category.findMany({
+      where: { userId: session.userId },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }]
+    })
 
-    return NextResponse.json({ categories })
+    const formattedCategories = categories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      icon: category.icon,
+      is_default: category.isDefault ?? false,
+      created_at: category.createdAt
+    }))
+
+    return NextResponse.json({ categories: formattedCategories })
   } catch (error) {
     console.error('Get categories error:', error)
     return NextResponse.json({ error: 'Failed to fetch categories' }, { status: 500 })
@@ -38,13 +44,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 })
     }
 
-    const result = await sql`
-      INSERT INTO categories (user_id, name, icon)
-      VALUES (${session.userId}, ${name}, ${icon || 'package'})
-      RETURNING id, name, icon, created_at
-    `
+    const category = await prisma.category.create({
+      data: {
+        userId: session.userId,
+        name,
+        icon: icon || 'package'
+      }
+    })
 
-    return NextResponse.json({ category: result[0] })
+    return NextResponse.json({
+      category: {
+        id: category.id,
+        name: category.name,
+        icon: category.icon,
+        created_at: category.createdAt
+      }
+    })
   } catch (error) {
     console.error('Create category error:', error)
     return NextResponse.json({ error: 'Failed to create category' }, { status: 500 })

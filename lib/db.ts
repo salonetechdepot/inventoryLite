@@ -1,8 +1,3 @@
-import { neon } from "@neondatabase/serverless"
-
-// Create a reusable SQL client
-export const sql = neon(process.env.DATABASE_URL!)
-
 // Helper to format currency in Sierra Leone New Leone (NLe)
 export function formatCurrency(amount: number): string {
   return `NLe ${amount.toLocaleString("en-SL", {
