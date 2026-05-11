@@ -38,6 +38,9 @@ export async function GET(
       product: {
         id: product.id,
         name: product.name,
+        scan_code: product.scanCode,
+        tags: product.tags,
+        has_specifications: product.hasSpecifications,
         quantity: product.quantity ?? 0,
         unit_price: Number(product.unitPrice ?? 0),
         low_stock_threshold: product.lowStockThreshold ?? 5,
@@ -66,7 +69,17 @@ export async function PATCH(
     }
 
     const { id } = await params
-    const { name, quantity, unitPrice, lowStockThreshold, categoryId, imageUrl } = await request.json()
+    const {
+      name,
+      quantity,
+      unitPrice,
+      lowStockThreshold,
+      categoryId,
+      imageUrl,
+      scanCode,
+      tags,
+      hasSpecifications
+    } = await request.json()
 
     const existingProduct = await prisma.product.findFirst({
       where: { id, userId: session.userId }
@@ -80,6 +93,9 @@ export async function PATCH(
       where: { id },
       data: {
         name: name ?? undefined,
+        scanCode: scanCode === undefined ? undefined : (scanCode?.trim() || null),
+        tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : undefined,
+        hasSpecifications: hasSpecifications === undefined ? undefined : Boolean(hasSpecifications),
         quantity: quantity ?? undefined,
         unitPrice: unitPrice ?? undefined,
         lowStockThreshold: lowStockThreshold ?? undefined,
@@ -93,6 +109,9 @@ export async function PATCH(
       product: {
         id: product.id,
         name: product.name,
+        scan_code: product.scanCode,
+        tags: product.tags,
+        has_specifications: product.hasSpecifications,
         quantity: product.quantity ?? 0,
         unit_price: Number(product.unitPrice ?? 0),
         low_stock_threshold: product.lowStockThreshold ?? 5,

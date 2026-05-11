@@ -2,14 +2,15 @@
 
 import useSWR from "swr"
 import Link from "next/link"
-import { Package, AlertTriangle, TrendingUp, ShoppingCart, Plus, ArrowRight } from "lucide-react"
+import { Package, AlertTriangle, TrendingUp, ShoppingCart, Plus, ArrowRight, Undo2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/hooks/use-auth"
+import { fetchWithOfflineCache } from "@/lib/offline-sync"
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 function formatPrice(amount: number) {
   return new Intl.NumberFormat('en-SL', {
@@ -58,7 +59,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Quick Actions */}
-      <div className="mb-6 flex gap-3">
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Button asChild size="lg" className="flex-1 h-14 text-base font-semibold">
           <Link href="/dashboard/products/new">
             <Plus className="mr-2 size-5" />
@@ -69,6 +70,12 @@ export default function DashboardPage() {
           <Link href="/dashboard/sell">
             <ShoppingCart className="mr-2 size-5" />
             Make Sale
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="lg" className="flex-1 h-14 text-base font-semibold">
+          <Link href="/dashboard/returns">
+            <Undo2 className="mr-2 size-5" />
+            Returns
           </Link>
         </Button>
       </div>

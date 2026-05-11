@@ -11,6 +11,8 @@ export interface User {
   id: string
   email: string
   business_name: string
+  theme_color?: string | null
+  shop_logo_url?: string | null
   created_at: Date
 }
 
@@ -91,6 +93,8 @@ export async function getCurrentUser(): Promise<User | null> {
       id: true,
       email: true,
       businessName: true,
+      themeColor: true,
+      shopLogoUrl: true,
       createdAt: true
     }
   })
@@ -101,6 +105,8 @@ export async function getCurrentUser(): Promise<User | null> {
     id: user.id,
     email: user.email,
     business_name: user.businessName,
+    theme_color: user.themeColor,
+    shop_logo_url: user.shopLogoUrl,
     created_at: user.createdAt ?? new Date()
   }
 }
@@ -139,6 +145,8 @@ export async function registerUser(
         id: true,
         email: true,
         businessName: true,
+        themeColor: true,
+        shopLogoUrl: true,
         createdAt: true
       }
     })
@@ -147,6 +155,8 @@ export async function registerUser(
       id: createdUser.id,
       email: createdUser.email,
       business_name: createdUser.businessName,
+      theme_color: createdUser.themeColor,
+      shop_logo_url: createdUser.shopLogoUrl,
       created_at: createdUser.createdAt ?? new Date()
     }
     
@@ -181,6 +191,8 @@ export async function loginUser(
         email: true,
         passwordHash: true,
         businessName: true,
+        themeColor: true,
+        shopLogoUrl: true,
         createdAt: true
       }
     })
@@ -200,6 +212,8 @@ export async function loginUser(
       id: user.id,
       email: user.email,
       business_name: user.businessName,
+      theme_color: user.themeColor,
+      shop_logo_url: user.shopLogoUrl,
       created_at: user.createdAt ?? new Date()
     })
     

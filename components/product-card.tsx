@@ -7,6 +7,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
+import { sendOrQueueMutation } from "@/lib/offline-sync"
 
 interface Product {
   id: string
@@ -17,6 +19,8 @@ interface Product {
   category_name: string | null
   category_icon: string | null
   image_url: string | null
+  has_specifications: boolean
+  tags: string[]
 }
 
 function formatPrice(amount: number) {
@@ -49,11 +53,33 @@ export function ProductCard({
     setIsAdjusting(true)
 
     try {
-      await fetch(`/api/products/${product.id}/adjust`, {
+      const { queued, response, conflict } = await sendOrQueueMutation({
+        url: `/api/products/${product.id}/adjust`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adjustment: amount }),
+        body: { adjustment: amount },
       })
+
+      if (conflict) {
+        setLocalQuantity(localQuantity)
+        toast({
+          title: "Stock conflict",
+          description: "Item was updated elsewhere. Refresh before adjusting again.",
+        })
+        return
+      }
+
+      if (!queued && response && !response.ok) {
+        setLocalQuantity(localQuantity)
+        return
+      }
+
+      if (queued) {
+        toast({
+          title: "Adjustment queued",
+          description: "Stock update will sync when connection returns.",
+        })
+      }
       onStockUpdate?.()
     } catch (error) {
       // Revert on error
@@ -115,6 +141,16 @@ export function ProductCard({
               <span className="text-sm text-muted-foreground">
                 {formatPrice(product.unit_price)} each
               </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              {product.has_specifications && (
+                <Badge variant="outline">Has Specs</Badge>
+              )}
+              {(product.tags || []).slice(0, 3).map((tag) => (
+                <Badge key={tag} variant="secondary">
+                  {tag}
+                </Badge>
+              ))}
             </div>
           </div>
         </div>

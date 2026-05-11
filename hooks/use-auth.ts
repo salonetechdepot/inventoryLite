@@ -1,15 +1,18 @@
 import useSWR from "swr"
 import { useRouter } from "next/navigation"
 import { useCallback } from "react"
+import { fetchWithOfflineCache } from "@/lib/offline-sync"
 
 interface User {
   id: string
   email: string
   business_name: string
+  theme_color?: string | null
+  shop_logo_url?: string | null
   created_at: string
 }
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 export function useAuth() {
   const router = useRouter()

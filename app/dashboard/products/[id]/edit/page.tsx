@@ -12,9 +12,12 @@ import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ImageUpload } from "@/components/image-upload"
+import { toast } from "@/hooks/use-toast"
+import { fetchWithOfflineCache, sendOrQueueMutation } from "@/lib/offline-sync"
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 interface Product {
   id: string
@@ -24,6 +27,9 @@ interface Product {
   low_stock_threshold: number
   category_id: string | null
   image_url: string | null
+  scan_code: string | null
+  tags: string[]
+  has_specifications: boolean
 }
 
 interface Category {
@@ -48,6 +54,9 @@ export default function EditProductPage() {
   const [unitPrice, setUnitPrice] = useState("")
   const [lowStockThreshold, setLowStockThreshold] = useState("")
   const [categoryId, setCategoryId] = useState("")
+  const [scanCode, setScanCode] = useState("")
+  const [tagsInput, setTagsInput] = useState("")
+  const [hasSpecifications, setHasSpecifications] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -63,6 +72,9 @@ export default function EditProductPage() {
       setUnitPrice(p.unit_price.toString())
       setLowStockThreshold(p.low_stock_threshold.toString())
       setCategoryId(p.category_id || "")
+      setScanCode(p.scan_code || "")
+      setTagsInput((p.tags || []).join(", "))
+      setHasSpecifications(Boolean(p.has_specifications))
       setImageUrl(p.image_url || undefined)
     }
   }, [productData])
@@ -79,22 +91,43 @@ export default function EditProductPage() {
     }
 
     try {
-      const res = await fetch(`/api/products/${productId}`, {
+      const payload = {
+        name: name.trim(),
+        quantity: parseInt(quantity) || 0,
+        unitPrice: parseFloat(unitPrice) || 0,
+        lowStockThreshold: parseInt(lowStockThreshold) || 5,
+        categoryId: categoryId || null,
+        scanCode: scanCode.trim() || null,
+        tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
+        hasSpecifications,
+        imageUrl: imageUrl || null,
+      }
+
+      const { queued, response, conflict } = await sendOrQueueMutation({
+        url: `/api/products/${productId}`,
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          quantity: parseInt(quantity) || 0,
-          unitPrice: parseFloat(unitPrice) || 0,
-          lowStockThreshold: parseInt(lowStockThreshold) || 5,
-          categoryId: categoryId || null,
-          imageUrl: imageUrl || null,
-        }),
+        body: payload,
       })
 
-      if (!res.ok) {
-        const data = await res.json()
-        setError(data.error || "Failed to update product")
+      if (queued) {
+        toast({
+          title: "Saved offline",
+          description: "Product changes will sync when you are back online.",
+        })
+        router.push("/dashboard/products")
+        return
+      }
+
+      if (conflict) {
+        setError("This product has changed on the server. Refresh and merge your changes.")
+        setLoading(false)
+        return
+      }
+
+      if (!response?.ok) {
+        const data = await response?.json()
+        setError(data?.error || "Failed to update product")
         setLoading(false)
         return
       }
@@ -109,7 +142,26 @@ export default function EditProductPage() {
   const handleDelete = async () => {
     setDeleting(true)
     try {
-      await fetch(`/api/products/${productId}`, { method: "DELETE" })
+      const { queued, response } = await sendOrQueueMutation({
+        url: `/api/products/${productId}`,
+        method: "DELETE",
+      })
+
+      if (queued) {
+        toast({
+          title: "Delete queued",
+          description: "Product deletion will sync when online.",
+        })
+        router.push("/dashboard/products")
+        return
+      }
+
+      if (!response?.ok) {
+        setError("Failed to delete product")
+        setDeleting(false)
+        return
+      }
+
       router.push("/dashboard/products")
     } catch {
       setError("Failed to delete product")
@@ -212,6 +264,48 @@ export default function EditProductPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="scanCode" className="text-base">Scan Code</FieldLabel>
+                <Input
+                  id="scanCode"
+                  type="text"
+                  placeholder="Barcode or SKU code"
+                  value={scanCode}
+                  onChange={(e) => setScanCode(e.target.value)}
+                  className="h-12 text-base"
+                />
+                <FieldDescription>Used for quick scan lookup while selling</FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="tags" className="text-base">Tags</FieldLabel>
+                <Input
+                  id="tags"
+                  type="text"
+                  placeholder="e.g. electronics, fragile"
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
+                  className="h-12 text-base"
+                />
+                <FieldDescription>Separate tags with commas</FieldDescription>
+              </Field>
+
+              <Field>
+                <div className="flex items-center gap-3">
+                  <Checkbox
+                    id="hasSpecifications"
+                    checked={hasSpecifications}
+                    onCheckedChange={(checked) => setHasSpecifications(Boolean(checked))}
+                  />
+                  <FieldLabel htmlFor="hasSpecifications" className="text-base cursor-pointer">
+                    Product has specifications
+                  </FieldLabel>
+                </div>
+                <FieldDescription>
+                  Use this to differentiate products that require spec selection/details
+                </FieldDescription>
               </Field>
 
               <div className="grid grid-cols-2 gap-4">

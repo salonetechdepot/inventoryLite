@@ -7,8 +7,9 @@ import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { fetchWithOfflineCache } from "@/lib/offline-sync"
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 interface Sale {
   id: string
@@ -85,7 +86,7 @@ function groupSalesByDate(sales: Sale[]): DailySummary[] {
 export default function SalesHistoryPage() {
   const [limit] = useState(100)
   const { data, error, isLoading } = useSWR<{ sales: Sale[] }>(
-    `/api/sales?limit=${limit}`,
+    `/api/sales?type=sale&limit=${limit}`,
     fetcher
   )
 
@@ -119,9 +120,9 @@ export default function SalesHistoryPage() {
               <TrendingUp className="size-4" />
               <span className="text-sm">Total Revenue</span>
             </div>
-            <p className="text-xl font-bold text-primary">
+            <div className="text-xl font-bold text-primary">
               {isLoading ? <Skeleton className="h-7 w-24" /> : `NLe ${formatCurrency(totalRevenue)}`}
-            </p>
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -130,9 +131,9 @@ export default function SalesHistoryPage() {
               <Receipt className="size-4" />
               <span className="text-sm">Transactions</span>
             </div>
-            <p className="text-xl font-bold">
+            <div className="text-xl font-bold">
               {isLoading ? <Skeleton className="h-7 w-16" /> : totalTransactions}
-            </p>
+            </div>
           </CardContent>
         </Card>
       </div>

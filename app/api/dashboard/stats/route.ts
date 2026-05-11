@@ -27,6 +27,7 @@ export async function GET() {
       prisma.sale.findMany({
         where: {
           userId: session.userId,
+          type: 'SALE',
           createdAt: {
             gte: new Date(new Date().setHours(0, 0, 0, 0)),
             lte: new Date(new Date().setHours(23, 59, 59, 999))

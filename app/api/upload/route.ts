@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData()
     const file = formData.get('file') as File
+    const folder = String(formData.get('folder') || 'products')
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -30,7 +31,8 @@ export async function POST(request: NextRequest) {
 
     // Create unique filename with user id prefix
     const extension = file.name.split('.').pop()
-    const filename = `products/${session.userId}/${Date.now()}.${extension}`
+    const safeFolder = folder === 'branding' ? 'branding' : 'products'
+    const filename = `${safeFolder}/${session.userId}/${Date.now()}.${extension}`
 
     const blob = await put(filename, file, {
       access: 'private',

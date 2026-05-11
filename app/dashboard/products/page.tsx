@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ProductCard } from "@/components/product-card"
 import { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent, EmptyHeader } from "@/components/ui/empty"
+import { fetchWithOfflineCache } from "@/lib/offline-sync"
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 interface Product {
   id: string
@@ -21,6 +22,8 @@ interface Product {
   image_url: string | null
   category_name: string | null
   category_icon: string | null
+  has_specifications: boolean
+  tags: string[]
 }
 
 export default function ProductsPage() {

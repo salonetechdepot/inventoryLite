@@ -1,20 +1,61 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { User, LogOut, Users, BarChart3, Lock, ChevronRight } from "lucide-react"
+import { User, LogOut, Users, BarChart3, Lock, ChevronRight, Paintbrush } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { ImageUpload } from "@/components/image-upload"
 import { useAuth } from "@/hooks/use-auth"
 
 export default function AccountPage() {
   const router = useRouter()
-  const { user, logout } = useAuth()
+  const { user, logout, mutate } = useAuth()
+  const [themeColor, setThemeColor] = useState(user?.theme_color || "#2E8B57")
+  const [shopLogoUrl, setShopLogoUrl] = useState<string | undefined>(user?.shop_logo_url || undefined)
+  const [saving, setSaving] = useState(false)
+  const [settingsError, setSettingsError] = useState("")
+
+  useEffect(() => {
+    if (!user) return
+    setThemeColor(user.theme_color || "#2E8B57")
+    setShopLogoUrl(user.shop_logo_url || undefined)
+  }, [user])
 
   const handleLogout = async () => {
     await logout()
     router.push("/login")
+  }
+
+  const saveSettings = async () => {
+    setSaving(true)
+    setSettingsError("")
+    try {
+      const res = await fetch("/api/account/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          themeColor,
+          shopLogoUrl: shopLogoUrl || null
+        })
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        setSettingsError(data.error || "Failed to save settings")
+        setSaving(false)
+        return
+      }
+
+      await mutate({ user: data.user }, false)
+    } catch {
+      setSettingsError("Could not save settings. Try again.")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -28,8 +69,16 @@ export default function AccountPage() {
       <Card className="mb-6">
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
-            <div className="size-16 rounded-full bg-primary/10 flex items-center justify-center">
-              <User className="size-8 text-primary" />
+            <div className="size-16 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+              {user?.shop_logo_url ? (
+                <img
+                  src={user.shop_logo_url}
+                  alt={user?.business_name || "Shop logo"}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <User className="size-8 text-primary" />
+              )}
             </div>
             <div>
               <h2 className="text-lg font-semibold">{user?.business_name || "My Business"}</h2>
@@ -67,6 +116,53 @@ export default function AccountPage() {
           <CardTitle className="text-base font-semibold">Settings</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          <div className="p-4 border-b">
+            <FieldGroup>
+              <Field>
+                <FieldLabel className="text-base flex items-center gap-2">
+                  <Paintbrush className="size-4" />
+                  Theme Color
+                </FieldLabel>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={themeColor}
+                    onChange={(e) => setThemeColor(e.target.value)}
+                    className="h-12 w-16 rounded border bg-background cursor-pointer"
+                  />
+                  <div className="flex-1 rounded-lg border h-12 px-3 flex items-center text-sm text-muted-foreground">
+                    {themeColor}
+                  </div>
+                </div>
+                <FieldDescription>
+                  Pick your shop color. This updates buttons and highlights across the app.
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel className="text-base">Shop Logo / Picture</FieldLabel>
+                <ImageUpload
+                  value={shopLogoUrl}
+                  onChange={setShopLogoUrl}
+                  folder="branding"
+                />
+                <FieldDescription>
+                  Upload your shop logo or storefront photo.
+                </FieldDescription>
+              </Field>
+
+              {settingsError && (
+                <div className="rounded-lg bg-destructive/10 p-3 text-destructive text-sm">
+                  {settingsError}
+                </div>
+              )}
+
+              <Button onClick={saveSettings} disabled={saving} className="w-full">
+                {saving ? "Saving..." : "Save Theme & Logo"}
+              </Button>
+            </FieldGroup>
+          </div>
+
           <SettingsItem
             icon={Lock}
             title="Change Password"

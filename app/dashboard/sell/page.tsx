@@ -11,8 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyMedia, EmptyTitle, EmptyDescription, EmptyHeader } from "@/components/ui/empty"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
+import { fetchWithOfflineCache, sendOrQueueMutation } from "@/lib/offline-sync"
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = fetchWithOfflineCache
 
 function formatPrice(amount: number) {
   return new Intl.NumberFormat('en-SL', {
@@ -26,6 +28,9 @@ function formatPrice(amount: number) {
 interface Product {
   id: string
   name: string
+  scan_code: string | null
+  tags: string[]
+  has_specifications: boolean
   quantity: number
   unit_price: number
   category_name: string | null
@@ -38,6 +43,7 @@ interface CartItem {
 }
 
 interface SaleRecord {
+  type: "sale" | "return"
   productName: string
   quantity: number
   unitPrice: number
@@ -50,12 +56,29 @@ export default function SellPage() {
   const [showReceipt, setShowReceipt] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [lastSale, setLastSale] = useState<{ items: SaleRecord[]; total: number; date: Date } | null>(null)
+  const [lastSale, setLastSale] = useState<{
+    items: SaleRecord[]
+    total: number
+    date: Date
+    customerName?: string
+    customerPhone?: string
+    discountAmount: number
+    amountPaid: number
+    amountDue: number
+    changeGiven: number
+    isPartPayment: boolean
+  } | null>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [scannerError, setScannerError] = useState("")
   const [showOversellConfirm, setShowOversellConfirm] = useState(false)
   const [oversellProduct, setOversellProduct] = useState<Product | null>(null)
   const [oversellQty, setOversellQty] = useState(1)
+  const [transactionType, setTransactionType] = useState<"sale" | "return">("sale")
+  const [customerName, setCustomerName] = useState("")
+  const [customerPhone, setCustomerPhone] = useState("")
+  const [discountAmount, setDiscountAmount] = useState("0")
+  const [amountPaid, setAmountPaid] = useState("0")
+  const [isPartPayment, setIsPartPayment] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
@@ -71,6 +94,12 @@ export default function SellPage() {
   // Calculate cart total
   const cartTotal = cart.reduce((sum, item) => sum + (item.quantity * item.product.unit_price), 0)
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
+  const discountValue = Math.max(0, Number(discountAmount) || 0)
+  const netTotal = Math.max(0, cartTotal - discountValue)
+  const amountPaidValue = Math.max(0, Number(amountPaid) || 0)
+  const negotiatedShortfall = Math.max(0, netTotal - amountPaidValue)
+  const amountDue = isPartPayment ? negotiatedShortfall : 0
+  const changeGiven = Math.max(0, amountPaidValue - netTotal)
 
   // Get remaining stock for a product (accounting for cart)
   const getRemainingStock = (product: Product) => {
@@ -82,8 +111,8 @@ export default function SellPage() {
     const quantity = forceQuantity || 1
     const remaining = getRemainingStock(product)
     
-    // If trying to add more than available and not forced, show confirmation
-    if (remaining <= 0 && !forceQuantity) {
+    // If trying to add more than available and not forced, show confirmation for sales only.
+    if (transactionType === "sale" && remaining <= 0 && !forceQuantity) {
       setOversellProduct(product)
       setOversellQty(1)
       setShowOversellConfirm(true)
@@ -133,7 +162,7 @@ export default function SellPage() {
     }
     
     // Check if going over stock
-    if (newQty > cartItem.product.quantity && delta > 0 && !force) {
+    if (transactionType === "sale" && newQty > cartItem.product.quantity && delta > 0 && !force) {
       setOversellProduct(cartItem.product)
       setOversellQty(1)
       setShowOversellConfirm(true)
@@ -156,48 +185,86 @@ export default function SellPage() {
 
   const clearCart = () => {
     setCart([])
+    setDiscountAmount("0")
+    setAmountPaid("0")
+    setIsPartPayment(false)
   }
 
   const handleCheckout = async () => {
     if (cart.length === 0) return
-    
+    if (transactionType === "sale" && amountPaidValue <= 0) {
+      setError("Enter the amount paid before checkout.")
+      return
+    }
     setLoading(true)
     setError("")
 
     try {
-      const res = await fetch("/api/sales/batch", {
+      const payload = {
+        items: cart.map((item) => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+        })),
+        type: transactionType,
+        customerName: customerName.trim() || null,
+        customerPhone: customerPhone.trim() || null,
+        discountAmount: discountValue,
+        amountPaid: amountPaidValue,
+        isPartPayment,
+      }
+
+      const { queued, response, conflict } = await sendOrQueueMutation({
+        url: "/api/sales/batch",
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: cart.map((item) => ({
-            productId: item.product.id,
-            quantity: item.quantity,
-          })),
-        }),
+        body: payload,
       })
 
-      const data = await res.json()
+      if (conflict) {
+        setError("Checkout conflict detected. Please refresh products and try again.")
+        return
+      }
 
-      if (!res.ok) {
-        setError(data.error || "Failed to record sales")
-        setLoading(false)
+      if (!queued && !response?.ok) {
+        const data = await response?.json()
+        setError(data?.error || "Failed to record sales")
         return
       }
 
       // Prepare receipt data
       setLastSale({
         items: cart.map((item) => ({
+          type: transactionType,
           productName: item.product.name,
           quantity: item.quantity,
           unitPrice: item.product.unit_price,
           total: item.quantity * item.product.unit_price,
         })),
-        total: cartTotal,
+        total: netTotal,
         date: new Date(),
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        discountAmount: discountValue,
+        amountPaid: amountPaidValue,
+        amountDue,
+        changeGiven,
+        isPartPayment
       })
       setShowReceipt(true)
       setCart([])
+      setCustomerName("")
+      setCustomerPhone("")
+      setDiscountAmount("0")
+      setAmountPaid("0")
+      setIsPartPayment(false)
       mutate()
+
+      if (queued) {
+        toast({
+          title: "Checkout saved offline",
+          description: "This transaction will sync automatically when online.",
+        })
+      }
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {
@@ -239,12 +306,14 @@ export default function SellPage() {
     }
   }, [])
 
-  // Simple barcode detection (searches for product name containing scanned code)
+  // Scan detection tries exact scan code first, then broad fallback matches.
   const handleScanInput = (code: string) => {
     const trimmedCode = code.trim().toLowerCase()
     if (!trimmedCode) return
     
     const matchedProduct = products.find(
+      (p) => p.scan_code?.toLowerCase() === trimmedCode
+    ) || products.find(
       (p) => p.name.toLowerCase().includes(trimmedCode) || p.id.includes(trimmedCode)
     )
     
@@ -272,6 +341,89 @@ export default function SellPage() {
           >
             <ScanLine className="size-6" />
           </Button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <Button
+            type="button"
+            variant={transactionType === "sale" ? "default" : "outline"}
+            onClick={() => setTransactionType("sale")}
+            className="h-11"
+          >
+            Sale
+          </Button>
+          <Button
+            type="button"
+            variant={transactionType === "return" ? "default" : "outline"}
+            onClick={() => setTransactionType("return")}
+            className="h-11"
+          >
+            Return
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          <Input
+            type="text"
+            placeholder="Customer name (optional)"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            className="h-11"
+          />
+          <Input
+            type="text"
+            placeholder="Customer phone (optional)"
+            value={customerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            className="h-11"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Discount (optional)"
+            value={discountAmount}
+            onChange={(e) => setDiscountAmount(e.target.value)}
+            className="h-11"
+          />
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Amount paid"
+            value={amountPaid}
+            onChange={(e) => setAmountPaid(e.target.value)}
+            className="h-11"
+          />
+          <Button
+            type="button"
+            variant={isPartPayment ? "default" : "outline"}
+            onClick={() => setIsPartPayment((prev) => !prev)}
+            className="h-11"
+          >
+            {isPartPayment ? "Part Payment On" : "Enable Part Payment"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          If part payment is off, amount paid is treated as the final negotiated sale amount.
+        </p>
+
+        <div className="grid grid-cols-3 gap-2 mb-4 text-xs sm:text-sm">
+          <div className="rounded-lg border p-2">
+            <p className="text-muted-foreground">Net Total</p>
+            <p className="font-semibold">{formatPrice(netTotal)}</p>
+          </div>
+          <div className="rounded-lg border p-2">
+            <p className="text-muted-foreground">Due</p>
+            <p className={cn("font-semibold", amountDue > 0 && "text-warning")}>{formatPrice(amountDue)}</p>
+          </div>
+          <div className="rounded-lg border p-2">
+            <p className="text-muted-foreground">Change</p>
+            <p className={cn("font-semibold", changeGiven > 0 && "text-primary")}>{formatPrice(changeGiven)}</p>
+          </div>
         </div>
         
         {/* Search */}
@@ -420,6 +572,16 @@ export default function SellPage() {
                       <p className="text-sm text-muted-foreground">
                         {formatPrice(product.unit_price)} each
                       </p>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {product.has_specifications && (
+                          <Badge variant="outline" className="text-[10px]">Specs</Badge>
+                        )}
+                        {(product.tags || []).slice(0, 2).map((tag) => (
+                          <Badge key={tag} variant="secondary" className="text-[10px]">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
                     
                     <div className="flex items-center gap-2">
@@ -453,7 +615,9 @@ export default function SellPage() {
             size="lg"
           >
             <ShoppingCart className="mr-2 size-6" />
-            {loading ? "Processing..." : `Checkout - ${formatPrice(cartTotal)}`}
+            {loading
+              ? "Processing..."
+              : `${transactionType === "sale" ? "Checkout Sale" : "Process Return"} - ${formatPrice(netTotal)}`}
           </Button>
         </div>
       )}
@@ -519,7 +683,9 @@ export default function SellPage() {
             <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary print:hidden">
               <Check className="size-8 text-primary-foreground" />
             </div>
-            <h2 className="text-xl font-bold print:text-lg">Sale Complete!</h2>
+            <h2 className="text-xl font-bold print:text-lg">
+              {lastSale?.items[0]?.type === "return" ? "Return Complete!" : "Sale Complete!"}
+            </h2>
             <p className="text-sm text-muted-foreground">
               {lastSale?.date.toLocaleDateString('en-GB', { 
                 day: 'numeric', 
@@ -530,6 +696,14 @@ export default function SellPage() {
               })}
             </p>
           </div>
+
+          {(lastSale?.customerName || lastSale?.customerPhone) && (
+            <div className="border rounded-lg p-3 text-sm">
+              <p className="font-semibold mb-1">Customer</p>
+              {lastSale?.customerName && <p>Name: {lastSale.customerName}</p>}
+              {lastSale?.customerPhone && <p>Phone: {lastSale.customerPhone}</p>}
+            </div>
+          )}
           
           {/* Receipt Items */}
           <div className="border rounded-lg divide-y">
@@ -551,6 +725,36 @@ export default function SellPage() {
             <div className="p-3 flex justify-between font-bold bg-primary/5">
               <span>TOTAL</span>
               <span className="text-primary text-lg">{formatPrice(lastSale?.total || 0)}</span>
+            </div>
+            <div className="p-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span>Discount</span>
+                <span>{formatPrice(lastSale?.discountAmount || 0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Amount Paid</span>
+                <span>{formatPrice(lastSale?.amountPaid || 0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Balance Due</span>
+                <span>{formatPrice(lastSale?.amountDue || 0)}</span>
+              </div>
+              {!lastSale?.isPartPayment && (lastSale?.amountDue || 0) === 0 && (lastSale?.amountPaid || 0) < (lastSale?.total || 0) && (
+                <div className="flex justify-between">
+                  <span>Negotiated Shortfall</span>
+                  <span>{formatPrice((lastSale?.total || 0) - (lastSale?.amountPaid || 0))}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>Change</span>
+                <span>{formatPrice(lastSale?.changeGiven || 0)}</span>
+              </div>
+              {(lastSale?.isPartPayment || (lastSale?.amountDue || 0) > 0) && (
+                <div className="flex justify-between font-semibold text-warning">
+                  <span>Status</span>
+                  <span>Part Payment</span>
+                </div>
+              )}
             </div>
           </div>
 

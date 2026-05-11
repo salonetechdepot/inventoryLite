@@ -9,9 +9,10 @@ interface ImageUploadProps {
   value?: string
   onChange: (url: string | undefined) => void
   className?: string
+  folder?: "products" | "branding"
 }
 
-export function ImageUpload({ value, onChange, className }: ImageUploadProps) {
+export function ImageUpload({ value, onChange, className, folder = "products" }: ImageUploadProps) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -26,6 +27,7 @@ export function ImageUpload({ value, onChange, className }: ImageUploadProps) {
     try {
       const formData = new FormData()
       formData.append("file", file)
+      formData.append("folder", folder)
 
       const res = await fetch("/api/upload", {
         method: "POST",

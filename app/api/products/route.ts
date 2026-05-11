@@ -27,6 +27,9 @@ export async function GET() {
     const formattedProducts = products.map((product) => ({
       id: product.id,
       name: product.name,
+      scan_code: product.scanCode,
+      tags: product.tags,
+      has_specifications: product.hasSpecifications,
       quantity: product.quantity ?? 0,
       unit_price: Number(product.unitPrice ?? 0),
       low_stock_threshold: product.lowStockThreshold ?? 5,
@@ -53,7 +56,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { name, quantity, unitPrice, lowStockThreshold, categoryId, imageUrl } = await request.json()
+    const {
+      name,
+      quantity,
+      unitPrice,
+      lowStockThreshold,
+      categoryId,
+      imageUrl,
+      scanCode,
+      tags,
+      hasSpecifications
+    } = await request.json()
 
     if (!name) {
       return NextResponse.json({ error: 'Product name is required' }, { status: 400 })
@@ -64,6 +77,9 @@ export async function POST(request: Request) {
         userId: session.userId,
         categoryId: categoryId || null,
         name,
+        scanCode: scanCode?.trim() || null,
+        tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : [],
+        hasSpecifications: Boolean(hasSpecifications),
         quantity: quantity || 0,
         unitPrice: unitPrice || 0,
         lowStockThreshold: lowStockThreshold || 5,
@@ -75,6 +91,9 @@ export async function POST(request: Request) {
       product: {
         id: product.id,
         name: product.name,
+        scan_code: product.scanCode,
+        tags: product.tags,
+        has_specifications: product.hasSpecifications,
         quantity: product.quantity ?? 0,
         unit_price: Number(product.unitPrice ?? 0),
         low_stock_threshold: product.lowStockThreshold ?? 5,

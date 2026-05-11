@@ -12,6 +12,8 @@ model User {
   email        String     @unique @db.VarChar(255)
   passwordHash String     @map("password_hash") @db.VarChar(255)
   businessName String     @map("business_name") @db.VarChar(255)
+  themeColor   String?    @map("theme_color") @db.VarChar(20)
+  shopLogoUrl  String?    @map("shop_logo_url") @db.VarChar(500)
   createdAt    DateTime?  @default(now()) @map("created_at") @db.Timestamp(6)
   categories   Category[]
   products     Product[]
@@ -39,6 +41,9 @@ model Product {
   userId            String?   @map("user_id") @db.Uuid
   categoryId        String?   @map("category_id") @db.Uuid
   name              String    @db.VarChar(255)
+  scanCode          String?   @unique @map("scan_code") @db.VarChar(255)
+  tags              String[]  @default([])
+  hasSpecifications Boolean   @default(false) @map("has_specifications")
   quantity          Int?      @default(0)
   unitPrice         Decimal?  @default(0.00) @map("unit_price") @db.Decimal(15, 2)
   lowStockThreshold Int?      @default(5) @map("low_stock_threshold")
@@ -58,7 +63,15 @@ model Sale {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId          String?   @map("user_id") @db.Uuid
   productId       String?   @map("product_id") @db.Uuid
+  type            SaleType  @default(SALE)
   productName     String    @map("product_name") @db.VarChar(255)
+  customerName    String?   @map("customer_name") @db.VarChar(255)
+  customerPhone   String?   @map("customer_phone") @db.VarChar(50)
+  discountAmount  Decimal?  @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
+  amountPaid      Decimal?  @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
+  changeGiven     Decimal?  @default(0.00) @map("change_given") @db.Decimal(15, 2)
+  amountDue       Decimal?  @default(0.00) @map("amount_due") @db.Decimal(15, 2)
+  isPartPayment   Boolean   @default(false) @map("is_part_payment")
   quantitySold    Int       @map("quantity_sold")
   unitPriceAtSale Decimal   @map("unit_price_at_sale") @db.Decimal(15, 2)
   totalAmount     Decimal   @map("total_amount") @db.Decimal(15, 2)
@@ -67,6 +80,12 @@ model Sale {
   product         Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([userId], map: "idx_sales_user_id")
+  @@index([type], map: "idx_sales_type")
   @@index([createdAt], map: "idx_sales_created_at")
   @@map("sales")
+}
+
+enum SaleType {
+  SALE
+  RETURN
 }
