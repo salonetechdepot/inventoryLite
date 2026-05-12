@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import type { Prisma } from '@prisma/client'
 
 interface SaleItem {
   productId: string
@@ -9,7 +10,7 @@ interface SaleItem {
 
 type TransactionType = 'sale' | 'return'
 
-// POST record multiple sales at once (cart checkout)
+// POST record a checkout (cart -> single Receipt with multiple Sale lines + initial Payment)
 export async function POST(request: Request) {
   try {
     const session = await getSession()
@@ -24,8 +25,10 @@ export async function POST(request: Request) {
       customerPhone,
       discountAmount = 0,
       amountPaid = 0,
-      isPartPayment = false
-    } = await request.json() as {
+      isPartPayment = false,
+      paymentMethod = 'cash',
+      notes,
+    } = (await request.json()) as {
       items: SaleItem[]
       type?: TransactionType
       customerName?: string
@@ -33,42 +36,33 @@ export async function POST(request: Request) {
       discountAmount?: number
       amountPaid?: number
       isPartPayment?: boolean
+      paymentMethod?: string
+      notes?: string
     }
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'No items provided' }, { status: 400 })
     }
 
-    // Validate all items have valid quantities
     for (const item of items) {
       if (!item.productId || !item.quantity || item.quantity <= 0) {
         return NextResponse.json({ error: 'Invalid item in cart' }, { status: 400 })
       }
     }
 
-    // Get all product details
-    const productIds = items.map(item => item.productId)
+    const productIds = items.map((item) => item.productId)
     const products = await prisma.product.findMany({
-      where: {
-        id: { in: productIds },
-        userId: session.userId
-      },
-      select: {
-        id: true,
-        name: true,
-        quantity: true,
-        unitPrice: true
-      }
+      where: { id: { in: productIds }, userId: session.userId },
+      select: { id: true, name: true, quantity: true, unitPrice: true },
     })
+    const productMap = new Map(products.map((p) => [p.id, p]))
 
-    // Create a map for easy lookup
-    const productMap = new Map(products.map(p => [p.id, p]))
-
-    // Validate products exist (allow overselling - stock can go negative)
     for (const item of items) {
-      const product = productMap.get(item.productId)
-      if (!product) {
-        return NextResponse.json({ error: `Product not found: ${item.productId}` }, { status: 404 })
+      if (!productMap.get(item.productId)) {
+        return NextResponse.json(
+          { error: `Product not found: ${item.productId}` },
+          { status: 404 }
+        )
       }
     }
 
@@ -83,23 +77,42 @@ export async function POST(request: Request) {
     const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
     const amountDue = isPartPayment ? negotiatedShortfall : 0
     const changeGiven = Math.max(0, safeAmountPaid - netAmount)
+    const isPaid = amountDue <= 0
 
-    // Process all transactions
-    const salesResults = []
-    for (const item of items) {
-      const product = productMap.get(item.productId)!
-      const unitPrice = Number(product.unitPrice ?? 0)
-      const totalAmount = item.quantity * unitPrice
-      const quantityUpdate = isReturn
-        ? { increment: item.quantity }
-        : { decrement: item.quantity }
+    // Single DB transaction: receipt + sales + product stock updates + initial payment
+    const result = await prisma.$transaction(async (tx) => {
+      const receipt = await tx.receipt.create({
+        data: {
+          userId: session.userId,
+          type: isReturn ? 'RETURN' : 'SALE',
+          customerName: customerName?.trim() || null,
+          customerPhone: customerPhone?.trim() || null,
+          subtotal,
+          discountAmount: safeDiscount,
+          netAmount,
+          amountPaid: safeAmountPaid,
+          amountDue,
+          changeGiven,
+          isPartPayment: Boolean(isPartPayment),
+          isPaid,
+          notes: notes?.trim() || null,
+        },
+      })
 
-      // Record sale and update stock in a single transaction for consistency.
-      const [saleResult] = await prisma.$transaction([
-        prisma.sale.create({
+      const createdSales: Prisma.SaleGetPayload<Prisma.SaleDefaultArgs>[] = []
+      for (const item of items) {
+        const product = productMap.get(item.productId)!
+        const unitPrice = Number(product.unitPrice ?? 0)
+        const totalAmount = item.quantity * unitPrice
+        const quantityUpdate = isReturn
+          ? { increment: item.quantity }
+          : { decrement: item.quantity }
+
+        const sale = await tx.sale.create({
           data: {
             userId: session.userId,
             productId: item.productId,
+            receiptId: receipt.id,
             type: isReturn ? 'RETURN' : 'SALE',
             productName: product.name,
             customerName: customerName?.trim() || null,
@@ -111,50 +124,62 @@ export async function POST(request: Request) {
             isPartPayment: Boolean(isPartPayment),
             quantitySold: item.quantity,
             unitPriceAtSale: unitPrice,
-            totalAmount
-          }
-        }),
-        prisma.product.update({
-          where: { id: item.productId },
-          data: {
-            quantity: quantityUpdate,
-            updatedAt: new Date()
-          }
+            totalAmount,
+          },
         })
-      ])
+        createdSales.push(sale)
 
-      salesResults.push({
-        id: saleResult.id,
-        type: saleResult.type,
-        customer_name: saleResult.customerName,
-        customer_phone: saleResult.customerPhone,
-        discount_amount: Number(saleResult.discountAmount ?? 0),
-        amount_paid: Number(saleResult.amountPaid ?? 0),
-        change_given: Number(saleResult.changeGiven ?? 0),
-        amount_due: Number(saleResult.amountDue ?? 0),
-        is_part_payment: saleResult.isPartPayment,
-        product_name: saleResult.productName,
-        quantity_sold: saleResult.quantitySold,
-        total_amount: Number(saleResult.totalAmount),
-        created_at: saleResult.createdAt
-      })
-    }
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { quantity: quantityUpdate, updatedAt: new Date() },
+        })
+      }
 
-    // Calculate total
-    const totalAmount = salesResults.reduce((sum, sale) => sum + Number(sale.total_amount), 0)
+      if (safeAmountPaid > 0) {
+        await tx.payment.create({
+          data: {
+            userId: session.userId,
+            receiptId: receipt.id,
+            amount: safeAmountPaid,
+            method: paymentMethod?.trim() || 'cash',
+            note: 'initial payment',
+          },
+        })
+      }
 
-    return NextResponse.json({ 
+      return { receipt, sales: createdSales }
+    })
+
+    return NextResponse.json({
       success: true,
       type: isReturn ? 'return' : 'sale',
-      sales: salesResults,
-      subtotal,
-      discountAmount: safeDiscount,
-      netAmount,
-      amountPaid: safeAmountPaid,
-      amountDue,
-      changeGiven,
-      totalAmount,
-      itemCount: items.length
+      receipt: {
+        id: result.receipt.id,
+        type: result.receipt.type,
+        customer_name: result.receipt.customerName,
+        customer_phone: result.receipt.customerPhone,
+        subtotal: Number(result.receipt.subtotal),
+        discount_amount: Number(result.receipt.discountAmount),
+        net_amount: Number(result.receipt.netAmount),
+        amount_paid: Number(result.receipt.amountPaid),
+        amount_due: Number(result.receipt.amountDue),
+        change_given: Number(result.receipt.changeGiven),
+        is_part_payment: result.receipt.isPartPayment,
+        is_paid: result.receipt.isPaid,
+        notes: result.receipt.notes,
+        created_at: result.receipt.createdAt,
+      },
+      sales: result.sales.map((sale) => ({
+        id: sale.id,
+        receipt_id: sale.receiptId,
+        type: sale.type,
+        product_name: sale.productName,
+        quantity_sold: sale.quantitySold,
+        unit_price_at_sale: Number(sale.unitPriceAtSale),
+        total_amount: Number(sale.totalAmount),
+        created_at: sale.createdAt,
+      })),
+      itemCount: items.length,
     })
   } catch (error) {
     console.error('Batch sale error:', error)
