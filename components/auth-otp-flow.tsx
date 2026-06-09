@@ -301,6 +301,16 @@ export function AuthOtpFlow({ mode }: { mode: Mode }) {
         </form>
       )}
 
+      {isRegister && (
+        <p className="text-center text-xs text-muted-foreground">
+          By creating an account, you agree to our{" "}
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
+      )}
+
       <FieldDescription className="text-center text-base block">
         {isRegister ? (
           <>

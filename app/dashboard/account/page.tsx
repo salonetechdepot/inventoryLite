@@ -374,9 +374,14 @@ export default function AccountPage() {
         Sign Out
       </Button>
 
-      <div className="mt-8 text-center">
+      <div className="mt-8 text-center space-y-2">
         <p className="text-sm text-muted-foreground">StockEasy v1.0</p>
-        <p className="text-xs text-muted-foreground mt-1">Made for Sierra Leone SMEs</p>
+        <p className="text-xs text-muted-foreground">Made for Sierra Leone SMEs</p>
+        <p className="text-xs text-muted-foreground">
+          <a href="/privacy" className="hover:text-foreground hover:underline">
+            Privacy Policy
+          </a>
+        </p>
       </div>
     </main>
   )
