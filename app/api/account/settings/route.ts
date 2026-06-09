@@ -33,6 +33,7 @@ export async function PATCH(request: Request) {
       select: {
         id: true,
         email: true,
+        phoneE164: true,
         businessName: true,
         themeColor: true,
         shopLogoUrl: true,
@@ -44,6 +45,7 @@ export async function PATCH(request: Request) {
       user: {
         id: user.id,
         email: user.email,
+        phone_e164: user.phoneE164,
         business_name: user.businessName,
         theme_color: user.themeColor,
         shop_logo_url: user.shopLogoUrl,

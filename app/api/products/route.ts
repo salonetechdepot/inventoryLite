@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { formatProductResponse } from '@/lib/format-product'
+import { parseSpecifications } from '@/lib/product-specifications'
+import type { Prisma } from '@prisma/client'
 
 // GET all products for current user
 export async function GET() {
@@ -24,22 +27,7 @@ export async function GET() {
       }
     })
 
-    const formattedProducts = products.map((product) => ({
-      id: product.id,
-      name: product.name,
-      scan_code: product.scanCode,
-      tags: product.tags,
-      has_specifications: product.hasSpecifications,
-      quantity: product.quantity ?? 0,
-      unit_price: Number(product.unitPrice ?? 0),
-      low_stock_threshold: product.lowStockThreshold ?? 5,
-      image_url: product.imageUrl,
-      created_at: product.createdAt,
-      updated_at: product.updatedAt,
-      category_id: product.category?.id ?? null,
-      category_name: product.category?.name ?? null,
-      category_icon: product.category?.icon ?? null
-    }))
+    const formattedProducts = products.map((product) => formatProductResponse(product))
 
     return NextResponse.json({ products: formattedProducts })
   } catch (error) {
@@ -60,12 +48,14 @@ export async function POST(request: Request) {
       name,
       quantity,
       unitPrice,
+      costPrice,
       lowStockThreshold,
       categoryId,
       imageUrl,
       scanCode,
       tags,
-      hasSpecifications
+      hasSpecifications,
+      specifications,
     } = await request.json()
 
     if (!name) {
@@ -80,26 +70,20 @@ export async function POST(request: Request) {
         scanCode: scanCode?.trim() || null,
         tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : [],
         hasSpecifications: Boolean(hasSpecifications),
+        specifications: parseSpecifications(specifications) as Prisma.InputJsonValue,
         quantity: quantity || 0,
         unitPrice: unitPrice || 0,
+        costPrice: costPrice != null && costPrice !== '' ? Number(costPrice) : null,
         lowStockThreshold: lowStockThreshold || 5,
-        imageUrl: imageUrl || null
-      }
+        imageUrl: imageUrl || null,
+      },
+      include: {
+        category: { select: { id: true, name: true, icon: true } },
+      },
     })
 
     return NextResponse.json({
-      product: {
-        id: product.id,
-        name: product.name,
-        scan_code: product.scanCode,
-        tags: product.tags,
-        has_specifications: product.hasSpecifications,
-        quantity: product.quantity ?? 0,
-        unit_price: Number(product.unitPrice ?? 0),
-        low_stock_threshold: product.lowStockThreshold ?? 5,
-        image_url: product.imageUrl,
-        created_at: product.createdAt
-      }
+      product: formatProductResponse(product),
     })
   } catch (error) {
     console.error('Create product error:', error)

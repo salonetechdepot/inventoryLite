@@ -2,10 +2,20 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
+import {
+  isReturnCondition,
+  isReturnDisposition,
+  restockQuantityForLine,
+  type ReturnCondition,
+  type ReturnDisposition,
+} from '@/lib/return-inventory'
+import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
 
 interface SaleItem {
   productId: string
   quantity: number
+  returnCondition?: ReturnCondition
+  returnDisposition?: ReturnDisposition
 }
 
 type TransactionType = 'sale' | 'return'
@@ -28,6 +38,7 @@ export async function POST(request: Request) {
       isPartPayment = false,
       paymentMethod = 'cash',
       notes,
+      originalReceiptId,
     } = (await request.json()) as {
       items: SaleItem[]
       type?: TransactionType
@@ -38,15 +49,32 @@ export async function POST(request: Request) {
       isPartPayment?: boolean
       paymentMethod?: string
       notes?: string
+      originalReceiptId?: string
     }
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'No items provided' }, { status: 400 })
     }
 
+    const isReturn = type === 'return'
+
     for (const item of items) {
       if (!item.productId || !item.quantity || item.quantity <= 0) {
         return NextResponse.json({ error: 'Invalid item in cart' }, { status: 400 })
+      }
+      if (isReturn) {
+        if (!isReturnCondition(item.returnCondition)) {
+          return NextResponse.json(
+            { error: 'Each returned item needs a condition (sealed, opened, or damaged)' },
+            { status: 400 }
+          )
+        }
+        if (!isReturnDisposition(item.returnDisposition)) {
+          return NextResponse.json(
+            { error: 'Each returned item needs restock or discard disposition' },
+            { status: 400 }
+          )
+        }
       }
     }
 
@@ -66,7 +94,22 @@ export async function POST(request: Request) {
       }
     }
 
-    const isReturn = type === 'return'
+    const linkedOriginalId =
+      isReturn && typeof originalReceiptId === 'string' && originalReceiptId.trim()
+        ? originalReceiptId.trim()
+        : null
+
+    if (linkedOriginalId) {
+      const validation = await validateReturnAgainstOriginalReceipt(
+        session.userId,
+        linkedOriginalId,
+        items
+      )
+      if (!validation.ok) {
+        return NextResponse.json({ error: validation.error }, { status: validation.status })
+      }
+    }
+
     const subtotal = items.reduce((sum, item) => {
       const product = productMap.get(item.productId)!
       return sum + item.quantity * Number(product.unitPrice ?? 0)
@@ -96,6 +139,7 @@ export async function POST(request: Request) {
           isPartPayment: Boolean(isPartPayment),
           isPaid,
           notes: notes?.trim() || null,
+          originalReceiptId: linkedOriginalId,
         },
       })
 
@@ -104,9 +148,9 @@ export async function POST(request: Request) {
         const product = productMap.get(item.productId)!
         const unitPrice = Number(product.unitPrice ?? 0)
         const totalAmount = item.quantity * unitPrice
-        const quantityUpdate = isReturn
-          ? { increment: item.quantity }
-          : { decrement: item.quantity }
+        const restockQty = isReturn
+          ? restockQuantityForLine(item.quantity, item.returnDisposition)
+          : 0
 
         const sale = await tx.sale.create({
           data: {
@@ -125,14 +169,25 @@ export async function POST(request: Request) {
             quantitySold: item.quantity,
             unitPriceAtSale: unitPrice,
             totalAmount,
+            returnCondition: isReturn ? item.returnCondition : null,
+            returnDisposition: isReturn ? item.returnDisposition : null,
           },
         })
         createdSales.push(sale)
 
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { quantity: quantityUpdate, updatedAt: new Date() },
-        })
+        if (isReturn) {
+          if (restockQty > 0) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { quantity: { increment: restockQty }, updatedAt: new Date() },
+            })
+          }
+        } else {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { quantity: { decrement: item.quantity }, updatedAt: new Date() },
+          })
+        }
       }
 
       if (safeAmountPaid > 0) {
@@ -167,6 +222,7 @@ export async function POST(request: Request) {
         is_part_payment: result.receipt.isPartPayment,
         is_paid: result.receipt.isPaid,
         notes: result.receipt.notes,
+        original_receipt_id: result.receipt.originalReceiptId,
         created_at: result.receipt.createdAt,
       },
       sales: result.sales.map((sale) => ({
@@ -177,6 +233,8 @@ export async function POST(request: Request) {
         quantity_sold: sale.quantitySold,
         unit_price_at_sale: Number(sale.unitPriceAtSale),
         total_amount: Number(sale.totalAmount),
+        return_condition: sale.returnCondition,
+        return_disposition: sale.returnDisposition,
         created_at: sale.createdAt,
       })),
       itemCount: items.length,

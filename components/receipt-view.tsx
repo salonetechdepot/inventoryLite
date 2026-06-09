@@ -4,6 +4,12 @@ import { Check, Printer, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import {
+  formatReturnCondition,
+  formatReturnDisposition,
+  type ReturnCondition,
+  type ReturnDisposition,
+} from "@/lib/return-inventory"
 
 export interface ReceiptPayment {
   id: string
@@ -19,6 +25,8 @@ export interface ReceiptSaleLine {
   quantity_sold: number
   unit_price_at_sale: number
   total_amount: number
+  return_condition?: string | null
+  return_disposition?: string | null
 }
 
 export interface ReceiptData {
@@ -149,6 +157,31 @@ export function ReceiptView({
                 <p className="text-xs text-muted-foreground">
                   {line.quantity_sold} × {formatPrice(line.unit_price_at_sale)}
                 </p>
+                {isReturn &&
+                  (line.return_condition || line.return_disposition) && (
+                    <p className="text-xs mt-0.5 flex flex-wrap gap-1">
+                      {line.return_condition && (
+                        <Badge variant="outline" className="h-5 text-[10px] font-normal">
+                          {formatReturnCondition(line.return_condition as ReturnCondition)}
+                        </Badge>
+                      )}
+                      {line.return_disposition && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "h-5 text-[10px] font-normal",
+                            line.return_disposition === "RESTOCK"
+                              ? "border-primary/40 text-primary"
+                              : "border-destructive/40 text-destructive"
+                          )}
+                        >
+                          {formatReturnDisposition(
+                            line.return_disposition as ReturnDisposition
+                          )}
+                        </Badge>
+                      )}
+                    </p>
+                  )}
               </div>
               <span className="font-semibold whitespace-nowrap">
                 {formatPrice(line.total_amount)}

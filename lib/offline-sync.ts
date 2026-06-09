@@ -1,5 +1,7 @@
 "use client"
 
+import { restockQuantityForLine, type ReturnDisposition } from "@/lib/return-inventory"
+
 const DB_NAME = "stockeasy-offline-db"
 const DB_VERSION = 1
 const CACHE_STORE = "cache"
@@ -7,8 +9,12 @@ const QUEUE_STORE = "queue"
 const CONFLICT_STORE = "conflicts"
 const MAX_RETRY_COUNT = 5
 const PRODUCTS_CACHE_KEY = "/api/products"
-/** Stable SWR key for return receipts — filters are client-side so offline cache always hits. */
+/** Stable SWR keys — filters are client-side so offline cache always hits. */
 export const RETURN_RECEIPTS_CACHE_KEY = "/api/receipts?type=return&limit=500&status=all"
+export const SALE_RECEIPTS_CACHE_KEY = "/api/receipts?type=sale&limit=500&status=all"
+export const CATEGORIES_CACHE_KEY = "/api/categories"
+export const DASHBOARD_STATS_CACHE_KEY = "/api/dashboard/stats"
+export const ANALYTICS_CACHE_KEY = "/api/analytics"
 
 export interface QueuedMutation {
   id: string
@@ -51,6 +57,8 @@ interface ProductShape {
   scan_code?: string | null
   tags?: string[]
   has_specifications?: boolean
+  cost_price?: number | null
+  specifications?: Record<string, string> | null
   _isLocalOnly?: boolean
 }
 
@@ -152,6 +160,14 @@ function createOptimisticProduct(payload: Record<string, unknown>, tempId: strin
     scan_code: (payload.scanCode as string | null | undefined) ?? null,
     tags: Array.isArray(payload.tags) ? (payload.tags as string[]) : [],
     has_specifications: Boolean(payload.hasSpecifications),
+    cost_price:
+      payload.costPrice === undefined || payload.costPrice === null
+        ? null
+        : Number(payload.costPrice),
+    specifications:
+      payload.specifications && typeof payload.specifications === "object"
+        ? (payload.specifications as Record<string, string>)
+        : null,
     _isLocalOnly: true,
   }
 }
@@ -176,11 +192,23 @@ function patchProductWithPayload(product: ProductShape, payload: Record<string, 
       payload.hasSpecifications === undefined
         ? Boolean(product.has_specifications)
         : Boolean(payload.hasSpecifications),
+    cost_price:
+      payload.costPrice === undefined
+        ? (product.cost_price ?? null)
+        : payload.costPrice === null
+          ? null
+          : Number(payload.costPrice),
+    specifications:
+      payload.specifications === undefined
+        ? (product.specifications ?? null)
+        : payload.specifications === null
+          ? null
+          : (payload.specifications as Record<string, string>),
   }
 }
 
 /** Matches GET /api/receipts row shape + offline flag */
-interface CachedReturnReceipt {
+interface CachedReceipt {
   id: string
   type: string
   customer_name: string | null
@@ -204,6 +232,8 @@ interface CachedReturnReceipt {
     quantity_sold: number
     unit_price_at_sale: number
     total_amount: number
+    return_condition?: string | null
+    return_disposition?: string | null
     created_at: string | Date
   }>
   payments: Array<{
@@ -216,9 +246,20 @@ interface CachedReturnReceipt {
   _isLocalOnly?: boolean
 }
 
-function mergeReturnReceiptsPreservingLocal(serverData: unknown, existingData: unknown) {
-  const incoming = (serverData as { receipts?: CachedReturnReceipt[] })?.receipts
-  const existing = (existingData as { receipts?: CachedReturnReceipt[] })?.receipts
+type CachedReturnReceipt = CachedReceipt
+
+interface DashboardStatsShape {
+  totalProducts: number
+  lowStockCount: number
+  outOfStockCount: number
+  inventoryValue: number
+  todaySalesCount: number
+  todaySalesTotal: number
+}
+
+function mergeReceiptsPreservingLocal(serverData: unknown, existingData: unknown) {
+  const incoming = (serverData as { receipts?: CachedReceipt[] })?.receipts
+  const existing = (existingData as { receipts?: CachedReceipt[] })?.receipts
   const serverReceipts = Array.isArray(incoming) ? incoming : []
   const current = Array.isArray(existing) ? existing : []
   const localOnly = current.filter((r) => r?._isLocalOnly)
@@ -231,20 +272,197 @@ function mergeReturnReceiptsPreservingLocal(serverData: unknown, existingData: u
   return { receipts: merged }
 }
 
-async function withReturnReceiptsCache(
-  updater: (receipts: CachedReturnReceipt[]) => CachedReturnReceipt[]
+function mergeReturnReceiptsPreservingLocal(serverData: unknown, existingData: unknown) {
+  return mergeReceiptsPreservingLocal(serverData, existingData)
+}
+
+function mergeSaleReceiptsPreservingLocal(serverData: unknown, existingData: unknown) {
+  return mergeReceiptsPreservingLocal(serverData, existingData)
+}
+
+async function withReceiptsCache(
+  cacheKey: string,
+  updater: (receipts: CachedReceipt[]) => CachedReceipt[]
 ) {
   const current =
-    (await getCachedData<{ receipts: CachedReturnReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)) ??
-    ({ receipts: [] } as { receipts: CachedReturnReceipt[] })
+    (await getCachedData<{ receipts: CachedReceipt[] }>(cacheKey)) ??
+    ({ receipts: [] } as { receipts: CachedReceipt[] })
   const next = updater(Array.isArray(current.receipts) ? current.receipts : [])
-  await cacheData(RETURN_RECEIPTS_CACHE_KEY, { receipts: next })
+  await cacheData(cacheKey, { receipts: next })
+}
+
+async function withReturnReceiptsCache(updater: (receipts: CachedReceipt[]) => CachedReceipt[]) {
+  return withReceiptsCache(RETURN_RECEIPTS_CACHE_KEY, updater)
+}
+
+async function withSaleReceiptsCache(updater: (receipts: CachedReceipt[]) => CachedReceipt[]) {
+  return withReceiptsCache(SALE_RECEIPTS_CACHE_KEY, updater)
+}
+
+function parseReceiptPaymentUrl(url: string): string | null {
+  const match = url.match(/^\/api\/receipts\/([^/]+)\/payments$/)
+  return match?.[1] ?? null
+}
+
+function formatReceiptFromApiResponse(receipt: Record<string, unknown>, sales: Array<Record<string, unknown>>) {
+  return formatReceiptFromBatchResponse({ receipt, sales })
+}
+
+async function bumpDashboardStatsAfterSale(amountPaid: number, itemsSold: number) {
+  const current = await getCachedData<{
+    stats: DashboardStatsShape
+    lowStockProducts: Array<{
+      id: string
+      name: string
+      quantity: number
+      low_stock_threshold: number
+    }>
+  }>(DASHBOARD_STATS_CACHE_KEY)
+  if (!current?.stats) return
+
+  const productsState = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
+  const products = productsState?.products ?? []
+  const lowStockCount = products.filter(
+    (p) => (p.quantity ?? 0) <= (p.low_stock_threshold ?? 0)
+  ).length
+  const outOfStockCount = products.filter((p) => (p.quantity ?? 0) === 0).length
+  const inventoryValue = products.reduce(
+    (sum, p) => sum + (p.quantity ?? 0) * Number(p.unit_price ?? 0),
+    0
+  )
+
+  await cacheData(DASHBOARD_STATS_CACHE_KEY, {
+    ...current,
+    stats: {
+      ...current.stats,
+      totalProducts: products.length,
+      lowStockCount,
+      outOfStockCount,
+      inventoryValue,
+      todaySalesCount: Number(current.stats.todaySalesCount ?? 0) + itemsSold,
+      todaySalesTotal: Number(current.stats.todaySalesTotal ?? 0) + amountPaid,
+    },
+    lowStockProducts: products
+      .filter((p) => (p.quantity ?? 0) <= (p.low_stock_threshold ?? 0))
+      .sort((a, b) => (a.quantity ?? 0) - (b.quantity ?? 0))
+      .slice(0, 5)
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        quantity: p.quantity ?? 0,
+        low_stock_threshold: p.low_stock_threshold ?? 0,
+      })),
+  })
+}
+
+type BatchCartItem = {
+  productId: string
+  quantity: number
+  returnCondition?: string
+  returnDisposition?: string
+}
+
+async function buildOptimisticBatchReceiptAsync(
+  payload: Record<string, unknown>,
+  items: BatchCartItem[],
+  receiptId: string,
+  receiptType: "SALE" | "RETURN"
+): Promise<CachedReceipt> {
+  const productsState = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
+  const productList = productsState?.products ?? []
+  const productById = new Map(productList.map((p) => [p.id, p]))
+
+  const safeDiscount = Math.max(0, Number(payload.discountAmount ?? 0))
+  const subtotal = items.reduce((sum, item) => {
+    const p = productById.get(item.productId)
+    return sum + item.quantity * Number(p?.unit_price ?? 0)
+  }, 0)
+  const netAmount = Math.max(0, subtotal - safeDiscount)
+  const safeAmountPaid = Math.max(0, Number(payload.amountPaid ?? 0))
+  const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
+  const isPartPayment = Boolean(payload.isPartPayment)
+  const amountDue = isPartPayment ? negotiatedShortfall : 0
+  const changeGiven = Math.max(0, safeAmountPaid - netAmount)
+  const isPaid = amountDue <= 0
+  const createdAt = new Date().toISOString()
+  const customerName = typeof payload.customerName === "string" ? payload.customerName.trim() : ""
+  const customerPhone = typeof payload.customerPhone === "string" ? payload.customerPhone.trim() : ""
+
+  const sales = items.map((item, idx) => {
+    const p = productById.get(item.productId)
+    const unit = Number(p?.unit_price ?? 0)
+    return {
+      id: `${receiptId}-line-${idx}`,
+      product_id: item.productId,
+      product_name: String(p?.name ?? "Product"),
+      quantity_sold: item.quantity,
+      unit_price_at_sale: unit,
+      total_amount: item.quantity * unit,
+      return_condition:
+        receiptType === "RETURN" ? item.returnCondition ?? "SEALED" : null,
+      return_disposition:
+        receiptType === "RETURN" ? item.returnDisposition ?? "RESTOCK" : null,
+      created_at: createdAt,
+    }
+  })
+
+  const payments =
+    safeAmountPaid > 0
+      ? [
+          {
+            id: `${receiptId}-pay`,
+            amount: safeAmountPaid,
+            method: "cash",
+            note: "initial payment",
+            created_at: createdAt,
+          },
+        ]
+      : []
+
+  return {
+    id: receiptId,
+    type: receiptType,
+    customer_name: customerName || null,
+    customer_phone: customerPhone || null,
+    subtotal,
+    discount_amount: safeDiscount,
+    net_amount: netAmount,
+    amount_paid: safeAmountPaid,
+    amount_due: amountDue,
+    change_given: changeGiven,
+    is_part_payment: isPartPayment,
+    is_paid: isPaid,
+    notes: null,
+    created_at: createdAt,
+    updated_at: createdAt,
+    item_count: sales.length,
+    sales,
+    payments,
+    _isLocalOnly: true,
+  }
+}
+
+async function upsertReceiptInCache(
+  cacheKey: string,
+  formatted: CachedReceipt,
+  offlineReceiptId?: string
+) {
+  await withReceiptsCache(cacheKey, (receipts) => {
+    if (offlineReceiptId) {
+      const rest = receipts.filter((r) => r.id !== offlineReceiptId)
+      return [formatted, ...rest]
+    }
+    if (receipts.some((r) => r.id === formatted.id)) {
+      return receipts.map((r) => (r.id === formatted.id ? formatted : r))
+    }
+    return [formatted, ...receipts]
+  })
 }
 
 function formatReceiptFromBatchResponse(data: {
   receipt: Record<string, unknown>
   sales: Array<Record<string, unknown>>
-}): CachedReturnReceipt {
+}): CachedReceipt {
   const r = data.receipt
   const amountPaid = Number(r.amount_paid ?? 0)
   const createdAt = (r.created_at as string) || new Date().toISOString()
@@ -267,6 +485,8 @@ function formatReceiptFromBatchResponse(data: {
     quantity_sold: Number(sale.quantity_sold ?? 0),
     unit_price_at_sale: Number(sale.unit_price_at_sale ?? 0),
     total_amount: Number(sale.total_amount ?? 0),
+    return_condition: (sale.return_condition as string | null | undefined) ?? null,
+    return_disposition: (sale.return_disposition as string | null | undefined) ?? null,
     created_at: (sale.created_at as string) || createdAt,
   }))
   return {
@@ -320,18 +540,81 @@ async function applyBatchReceiptCacheResolution(
   })
   const isReturn =
     String(data.receipt.type ?? data.type ?? "").toUpperCase() === "RETURN" || data.type === "return"
-  if (!isReturn) return
+  const cacheKey = isReturn ? RETURN_RECEIPTS_CACHE_KEY : SALE_RECEIPTS_CACHE_KEY
+  await upsertReceiptInCache(cacheKey, formatted, offlineReceiptId)
+}
 
-  await withReturnReceiptsCache((receipts) => {
-    if (offlineReceiptId) {
-      const rest = receipts.filter((r) => r.id !== offlineReceiptId)
-      return [formatted, ...rest]
+async function applyPaymentCacheResolution(mutation: QueuedMutation, response: Response) {
+  const receiptId = parseReceiptPaymentUrl(mutation.url)
+  if (!receiptId || mutation.method !== "POST") return
+  try {
+    const data = (await response.clone().json()) as {
+      receipt?: Record<string, unknown>
+      credited?: number
     }
-    if (receipts.some((r) => r.id === formatted.id)) {
-      return receipts.map((r) => (r.id === formatted.id ? formatted : r))
+    if (!data?.receipt) return
+    const sales = Array.isArray(data.receipt.sales)
+      ? (data.receipt.sales as Array<Record<string, unknown>>)
+      : []
+    const formatted = formatReceiptFromApiResponse(data.receipt, sales)
+    await upsertReceiptInCache(SALE_RECEIPTS_CACHE_KEY, { ...formatted, _isLocalOnly: false })
+    const credited = Number(data.credited ?? 0)
+    if (credited > 0) {
+      await bumpDashboardStatsAfterSale(credited, 0)
     }
-    return [formatted, ...receipts]
-  })
+  } catch {
+    // ignore parse errors
+  }
+}
+
+async function applyOptimisticPaymentMutation(input: {
+  url: string
+  method: "POST" | "PATCH" | "PUT" | "DELETE"
+  body?: unknown
+}) {
+  const receiptId = parseReceiptPaymentUrl(input.url)
+  if (!receiptId || input.method !== "POST") return {}
+
+  const payload = (input.body ?? {}) as Record<string, unknown>
+  const amount = Math.max(0, Number(payload.amount ?? 0))
+  if (amount <= 0) return {}
+
+  const method = typeof payload.method === "string" ? payload.method : "cash"
+  const note = typeof payload.note === "string" ? payload.note.trim() : null
+  const createdAt = new Date().toISOString()
+
+  await withSaleReceiptsCache((receipts) =>
+    receipts.map((receipt) => {
+      if (receipt.id !== receiptId) return receipt
+      const currentDue = Number(receipt.amount_due ?? 0)
+      const credited = Math.min(amount, currentDue)
+      const overflow = amount - credited
+      const newPaid = Number(receipt.amount_paid ?? 0) + amount
+      const newDue = Math.max(0, currentDue - credited)
+      const newChange = Number(receipt.change_given ?? 0) + overflow
+      const nowPaid = newDue <= 0
+      const newPayment = {
+        id: `local-pay-${crypto.randomUUID()}`,
+        amount,
+        method,
+        note,
+        created_at: createdAt,
+      }
+      return {
+        ...receipt,
+        amount_paid: newPaid,
+        amount_due: newDue,
+        change_given: newChange,
+        is_paid: nowPaid,
+        is_part_payment: nowPaid ? false : receipt.is_part_payment,
+        updated_at: createdAt,
+        payments: [...(receipt.payments ?? []), newPayment],
+        _isLocalOnly: true,
+      }
+    })
+  )
+
+  return {}
 }
 
 async function withProductsCache(
@@ -347,6 +630,11 @@ async function applyOptimisticProductMutation(input: {
   method: "POST" | "PATCH" | "PUT" | "DELETE"
   body?: unknown
 }) {
+  if (parseReceiptPaymentUrl(input.url) && input.method === "POST") {
+    await applyOptimisticPaymentMutation(input)
+    return {}
+  }
+
   const payload = (input.body ?? {}) as Record<string, unknown>
   let tempId: string | undefined
 
@@ -388,7 +676,7 @@ async function applyOptimisticProductMutation(input: {
 
   if (input.url === "/api/sales/batch" && input.method === "POST") {
     const items = Array.isArray(payload.items)
-      ? (payload.items as Array<{ productId: string; quantity: number }>)
+      ? (payload.items as BatchCartItem[])
       : []
     const type = payload.type === "return" ? "return" : "sale"
 
@@ -397,85 +685,36 @@ async function applyOptimisticProductMutation(input: {
         const item = items.find((entry) => entry.productId === product.id)
         if (!item) return product
         const qty = Number(item.quantity ?? 0)
-        const delta = type === "return" ? qty : -qty
+        const delta =
+          type === "return"
+            ? restockQuantityForLine(
+                qty,
+                item.returnDisposition as ReturnDisposition | undefined
+              )
+            : -qty
         return { ...product, quantity: Number(product.quantity ?? 0) + delta }
       })
     )
 
-    if (type === "return" && items.length > 0) {
+    if (items.length > 0) {
       const receiptId = String(payload._offlineReceiptId ?? `local-${crypto.randomUUID()}`)
       payload._offlineReceiptId = receiptId
+      const receiptType = type === "return" ? "RETURN" : "SALE"
+      const optimistic = await buildOptimisticBatchReceiptAsync(
+        payload,
+        items,
+        receiptId,
+        receiptType
+      )
+      const cacheKey =
+        type === "return" ? RETURN_RECEIPTS_CACHE_KEY : SALE_RECEIPTS_CACHE_KEY
+      await withReceiptsCache(cacheKey, (receipts) => [optimistic, ...receipts])
 
-      const productsState = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
-      const productList = productsState?.products ?? []
-      const productById = new Map(productList.map((p) => [p.id, p]))
-
-      const safeDiscount = Math.max(0, Number(payload.discountAmount ?? 0))
-      const subtotal = items.reduce((sum, item) => {
-        const p = productById.get(item.productId)
-        return sum + item.quantity * Number(p?.unit_price ?? 0)
-      }, 0)
-      const netAmount = Math.max(0, subtotal - safeDiscount)
-      const safeAmountPaid = Math.max(0, Number(payload.amountPaid ?? 0))
-      const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
-      const isPartPayment = Boolean(payload.isPartPayment)
-      const amountDue = isPartPayment ? negotiatedShortfall : 0
-      const changeGiven = Math.max(0, safeAmountPaid - netAmount)
-      const isPaid = amountDue <= 0
-      const createdAt = new Date().toISOString()
-      const customerName = typeof payload.customerName === "string" ? payload.customerName.trim() : ""
-      const customerPhone = typeof payload.customerPhone === "string" ? payload.customerPhone.trim() : ""
-
-      const sales = items.map((item, idx) => {
-        const p = productById.get(item.productId)
-        const unit = Number(p?.unit_price ?? 0)
-        return {
-          id: `${receiptId}-line-${idx}`,
-          product_id: item.productId,
-          product_name: String(p?.name ?? "Product"),
-          quantity_sold: item.quantity,
-          unit_price_at_sale: unit,
-          total_amount: item.quantity * unit,
-          created_at: createdAt,
-        }
-      })
-
-      const payments =
-        safeAmountPaid > 0
-          ? [
-              {
-                id: `${receiptId}-pay`,
-                amount: safeAmountPaid,
-                method: "cash",
-                note: "initial payment",
-                created_at: createdAt,
-              },
-            ]
-          : []
-
-      const optimistic: CachedReturnReceipt = {
-        id: receiptId,
-        type: "RETURN",
-        customer_name: customerName || null,
-        customer_phone: customerPhone || null,
-        subtotal,
-        discount_amount: safeDiscount,
-        net_amount: netAmount,
-        amount_paid: safeAmountPaid,
-        amount_due: amountDue,
-        change_given: changeGiven,
-        is_part_payment: isPartPayment,
-        is_paid: isPaid,
-        notes: null,
-        created_at: createdAt,
-        updated_at: createdAt,
-        item_count: sales.length,
-        sales,
-        payments,
-        _isLocalOnly: true,
+      if (type === "sale") {
+        const itemsSold = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+        await bumpDashboardStatsAfterSale(Number(optimistic.amount_paid ?? 0), itemsSold)
       }
 
-      await withReturnReceiptsCache((receipts) => [optimistic, ...receipts])
       return { tempId: receiptId }
     }
 
@@ -585,6 +824,16 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
   return record.data as T
 }
 
+export async function getCacheUpdatedAt(key: string): Promise<number | null> {
+  if (!isBrowser()) return null
+  const db = await openDb()
+  const tx = db.transaction(CACHE_STORE, "readonly")
+  const store = tx.objectStore(CACHE_STORE)
+  const record = (await idbRequest(store.get(key))) as CachedRecord | undefined
+  await txDone(tx)
+  return record?.updatedAt ?? null
+}
+
 async function getQueue() {
   if (!isBrowser()) return [] as QueuedMutation[]
   const queue = await getAllFromStore<QueuedMutation>(QUEUE_STORE)
@@ -651,6 +900,10 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   if (!isOnline) {
     const cached = await getCachedData<T>(cacheKey)
     if (cached !== null) return cached
+    if (cacheKey === ANALYTICS_CACHE_KEY) {
+      const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
+      return { ...EMPTY_ANALYTICS, _offline: true } as T
+    }
     throw new Error("You are offline and there is no cached data available.")
   }
 
@@ -668,8 +921,15 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
     }
 
     if (cacheKey === RETURN_RECEIPTS_CACHE_KEY) {
-      const previous = await getCachedData<{ receipts: CachedReturnReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)
+      const previous = await getCachedData<{ receipts: CachedReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)
       const merged = mergeReturnReceiptsPreservingLocal(data, previous)
+      await cacheData(cacheKey, merged as T)
+      return merged as T
+    }
+
+    if (cacheKey === SALE_RECEIPTS_CACHE_KEY) {
+      const previous = await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY)
+      const merged = mergeSaleReceiptsPreservingLocal(data, previous)
       await cacheData(cacheKey, merged as T)
       return merged as T
     }
@@ -679,6 +939,10 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   } catch {
     const cached = await getCachedData<T>(cacheKey)
     if (cached !== null) return cached
+    if (cacheKey === ANALYTICS_CACHE_KEY) {
+      const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
+      return { ...EMPTY_ANALYTICS, _offline: true } as T
+    }
     throw new Error("Failed to fetch data and no offline cache was found.")
   }
 }
@@ -715,6 +979,21 @@ export async function sendOrQueueMutation(input: {
     if (input.url === "/api/sales/batch" && input.method === "POST") {
       await applyBatchReceiptCacheResolution(
         { url: input.url, method: input.method, body: input.body },
+        response
+      )
+    }
+
+    if (parseReceiptPaymentUrl(input.url) && input.method === "POST") {
+      await applyPaymentCacheResolution(
+        {
+          id: "live",
+          url: input.url,
+          method: input.method,
+          body: input.body,
+          headers: input.headers,
+          createdAt: Date.now(),
+          retryCount: 0,
+        },
         response
       )
     }
@@ -765,6 +1044,7 @@ export async function processOfflineQueue() {
       if (res.ok || shouldTreatAsSuccess(mutation, res.status)) {
         await deleteFromStore(QUEUE_STORE, mutation.id)
         await applyBatchReceiptCacheResolution(mutation, res)
+        await applyPaymentCacheResolution(mutation, res)
         const createdMap = await applyCreateSyncResolution(mutation, res)
         if (createdMap) Object.assign(tempIdMap, createdMap)
         synced += 1

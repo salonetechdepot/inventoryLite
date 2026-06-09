@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -10,6 +11,7 @@ datasource db {
 model User {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email        String     @unique @db.VarChar(255)
+  phoneE164    String?    @unique @map("phone_e164") @db.VarChar(20)
   passwordHash String     @map("password_hash") @db.VarChar(255)
   businessName String     @map("business_name") @db.VarChar(255)
   themeColor   String?    @map("theme_color") @db.VarChar(20)
@@ -22,6 +24,23 @@ model User {
   payments     Payment[]
 
   @@map("users")
+}
+
+model AuthOtp {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel     String   @default("whatsapp") @db.VarChar(20)
+  phoneE164   String?  @map("phone_e164") @db.VarChar(20)
+  email       String?  @db.VarChar(255)
+  codeHash    String   @map("code_hash") @db.VarChar(255)
+  expiresAt   DateTime @map("expires_at") @db.Timestamp(6)
+  purpose     String   @db.VarChar(20)
+  pendingJson Json?    @map("pending_json")
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([phoneE164, purpose], map: "auth_otps_phone_purpose_idx")
+  @@index([email, purpose], map: "auth_otps_email_purpose_idx")
+  @@map("auth_otps")
 }
 
 model Category {
@@ -48,6 +67,8 @@ model Product {
   hasSpecifications Boolean   @default(false) @map("has_specifications")
   quantity          Int?      @default(0)
   unitPrice         Decimal?  @default(0.00) @map("unit_price") @db.Decimal(15, 2)
+  costPrice         Decimal?  @map("cost_price") @db.Decimal(15, 2)
+  specifications    Json?     @map("specifications")
   lowStockThreshold Int?      @default(5) @map("low_stock_threshold")
   imageUrl          String?   @map("image_url") @db.VarChar(500)
   createdAt         DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
@@ -75,10 +96,12 @@ model Sale {
   changeGiven     Decimal?  @default(0.00) @map("change_given") @db.Decimal(15, 2)
   amountDue       Decimal?  @default(0.00) @map("amount_due") @db.Decimal(15, 2)
   isPartPayment   Boolean   @default(false) @map("is_part_payment")
-  quantitySold    Int       @map("quantity_sold")
-  unitPriceAtSale Decimal   @map("unit_price_at_sale") @db.Decimal(15, 2)
-  totalAmount     Decimal   @map("total_amount") @db.Decimal(15, 2)
-  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  quantitySold       Int                 @map("quantity_sold")
+  unitPriceAtSale    Decimal             @map("unit_price_at_sale") @db.Decimal(15, 2)
+  totalAmount        Decimal             @map("total_amount") @db.Decimal(15, 2)
+  returnCondition    ReturnCondition?    @map("return_condition")
+  returnDisposition  ReturnDisposition?  @map("return_disposition")
+  createdAt          DateTime?           @default(now()) @map("created_at") @db.Timestamp(6)
   user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   product         Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
   receipt         Receipt?  @relation(fields: [receiptId], references: [id], onDelete: SetNull)
@@ -104,14 +127,18 @@ model Receipt {
   changeGiven    Decimal   @default(0.00) @map("change_given") @db.Decimal(15, 2)
   isPartPayment  Boolean   @default(false) @map("is_part_payment")
   isPaid         Boolean   @default(true) @map("is_paid")
-  notes          String?   @db.VarChar(500)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sales          Sale[]
-  payments       Payment[]
+  notes              String?   @db.VarChar(500)
+  originalReceiptId  String?   @map("original_receipt_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originalReceipt    Receipt?  @relation("ReceiptReturns", fields: [originalReceiptId], references: [id], onDelete: SetNull)
+  linkedReturns      Receipt[] @relation("ReceiptReturns")
+  sales              Sale[]
+  payments           Payment[]
 
   @@index([userId], map: "idx_receipts_user_id")
+  @@index([originalReceiptId], map: "idx_receipts_original_receipt_id")
   @@index([createdAt], map: "idx_receipts_created_at")
   @@index([isPaid], map: "idx_receipts_is_paid")
   @@map("receipts")
@@ -136,4 +163,15 @@ model Payment {
 enum SaleType {
   SALE
   RETURN
+}
+
+enum ReturnCondition {
+  SEALED
+  OPENED
+  DAMAGED
+}
+
+enum ReturnDisposition {
+  RESTOCK
+  DISCARD
 }

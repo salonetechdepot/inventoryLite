@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { formatProductResponse } from '@/lib/format-product'
+import { parseSpecifications } from '@/lib/product-specifications'
+import type { Prisma } from '@prisma/client'
 
 // GET single product
 export async function GET(
@@ -35,21 +38,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      product: {
-        id: product.id,
-        name: product.name,
-        scan_code: product.scanCode,
-        tags: product.tags,
-        has_specifications: product.hasSpecifications,
-        quantity: product.quantity ?? 0,
-        unit_price: Number(product.unitPrice ?? 0),
-        low_stock_threshold: product.lowStockThreshold ?? 5,
-        image_url: product.imageUrl,
-        created_at: product.createdAt,
-        updated_at: product.updatedAt,
-        category_id: product.category?.id ?? null,
-        category_name: product.category?.name ?? null
-      }
+      product: formatProductResponse(product),
     })
   } catch (error) {
     console.error('Get product error:', error)
@@ -73,12 +62,14 @@ export async function PATCH(
       name,
       quantity,
       unitPrice,
+      costPrice,
       lowStockThreshold,
       categoryId,
       imageUrl,
       scanCode,
       tags,
-      hasSpecifications
+      hasSpecifications,
+      specifications,
     } = await request.json()
 
     const existingProduct = await prisma.product.findFirst({
@@ -96,28 +87,30 @@ export async function PATCH(
         scanCode: scanCode === undefined ? undefined : (scanCode?.trim() || null),
         tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : undefined,
         hasSpecifications: hasSpecifications === undefined ? undefined : Boolean(hasSpecifications),
+        specifications:
+          specifications === undefined
+            ? undefined
+            : (parseSpecifications(specifications) as Prisma.InputJsonValue),
         quantity: quantity ?? undefined,
         unitPrice: unitPrice ?? undefined,
+        costPrice:
+          costPrice === undefined
+            ? undefined
+            : costPrice === null || costPrice === ''
+              ? null
+              : Number(costPrice),
         lowStockThreshold: lowStockThreshold ?? undefined,
         categoryId: categoryId ?? undefined,
         imageUrl: imageUrl ?? null,
-        updatedAt: new Date()
-      }
+        updatedAt: new Date(),
+      },
+      include: {
+        category: { select: { id: true, name: true, icon: true } },
+      },
     })
 
     return NextResponse.json({
-      product: {
-        id: product.id,
-        name: product.name,
-        scan_code: product.scanCode,
-        tags: product.tags,
-        has_specifications: product.hasSpecifications,
-        quantity: product.quantity ?? 0,
-        unit_price: Number(product.unitPrice ?? 0),
-        low_stock_threshold: product.lowStockThreshold ?? 5,
-        image_url: product.imageUrl,
-        updated_at: product.updatedAt
-      }
+      product: formatProductResponse(product),
     })
   } catch (error) {
     console.error('Update product error:', error)

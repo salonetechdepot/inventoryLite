@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import useSWR from "swr"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
   Receipt as ReceiptIcon,
@@ -11,6 +12,8 @@ import {
   AlertCircle,
   ChevronRight,
   Filter,
+  WifiOff,
+  Undo2,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -23,7 +26,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { fetchWithOfflineCache } from "@/lib/offline-sync"
+import {
+  fetchWithOfflineCache,
+  SALE_RECEIPTS_CACHE_KEY,
+  sendOrQueueMutation,
+} from "@/lib/offline-sync"
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { toast } from "@/hooks/use-toast"
@@ -100,13 +107,25 @@ export default function SalesHistoryPage() {
   const [activeReceipt, setActiveReceipt] = useState<ApiReceipt | null>(null)
   const { user } = useAuth()
 
-  const query = `/api/receipts?type=sale&limit=200&status=${statusFilter}`
   const { data, error, isLoading, mutate } = useSWR<{ receipts: ApiReceipt[] }>(
-    query,
+    SALE_RECEIPTS_CACHE_KEY,
     fetcher
   )
 
-  const receipts = useMemo(() => data?.receipts || [], [data])
+  const isOffline =
+    typeof navigator !== "undefined" && !navigator.onLine && Boolean(data)
+
+  const allReceipts = useMemo(() => data?.receipts || [], [data])
+
+  const receipts = useMemo(() => {
+    if (statusFilter === "paid") {
+      return allReceipts.filter((r) => r.is_paid)
+    }
+    if (statusFilter === "unpaid") {
+      return allReceipts.filter((r) => !r.is_paid)
+    }
+    return allReceipts
+  }, [allReceipts, statusFilter])
   const dailyGroups = useMemo(() => groupReceiptsByDay(receipts), [receipts])
 
   const totalRevenue = receipts.reduce(
@@ -134,10 +153,23 @@ export default function SalesHistoryPage() {
           <ArrowLeft className="size-5 mr-1" />
           Back to Dashboard
         </Link>
-        <h1 className="text-2xl font-bold">Sales History</h1>
-        <p className="text-muted-foreground">
-          Tap any receipt to view, reprint, or record a payment.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold">Sales History</h1>
+            <p className="text-muted-foreground">
+              Tap any receipt to view, reprint, or record a payment.
+            </p>
+          </div>
+          {isOffline && (
+            <Badge
+              variant="secondary"
+              className="bg-warning/20 text-warning border-warning/40 shrink-0"
+            >
+              <WifiOff className="size-3 mr-1" />
+              Offline
+            </Badge>
+          )}
+        </div>
       </header>
 
       {/* Summary Cards */}
@@ -208,15 +240,16 @@ export default function SalesHistoryPage() {
             <Skeleton key={i} className="h-24 w-full rounded-xl" />
           ))}
         </div>
-      ) : error ? (
+      ) : error && allReceipts.length === 0 ? (
         <Card className="p-8 text-center">
-          <p className="text-destructive">Failed to load sales history</p>
-          <Button
-            variant="outline"
-            className="mt-4"
-            onClick={() => window.location.reload()}
-          >
-            Try Again
+          <WifiOff className="size-12 mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-semibold mb-2">Could not load sales</h3>
+          <p className="text-muted-foreground mb-4 text-sm">
+            You appear to be offline and there is no cached data yet. Connect once to load
+            your sales history.
+          </p>
+          <Button variant="outline" onClick={() => mutate()}>
+            Retry
           </Button>
         </Card>
       ) : receipts.length === 0 ? (
@@ -271,6 +304,11 @@ export default function SalesHistoryPage() {
                               Part Payment
                             </Badge>
                           )}
+                          {String(receipt.id).startsWith("local-") && (
+                            <Badge variant="outline" className="h-5 text-[10px]">
+                              Pending sync
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {receipt.item_count} item
@@ -309,6 +347,7 @@ export default function SalesHistoryPage() {
         shopLogoUrl={user?.shop_logo_url}
         onClose={() => setActiveReceipt(null)}
         onUpdated={handleReceiptUpdated}
+        onMutate={() => void mutate()}
       />
     </main>
   )
@@ -320,12 +359,14 @@ function ReceiptDetailsDialog({
   shopLogoUrl,
   onClose,
   onUpdated,
+  onMutate,
 }: {
   receipt: ApiReceipt | null
   businessName?: string | null
   shopLogoUrl?: string | null
   onClose: () => void
   onUpdated: (receipt: ApiReceipt) => void
+  onMutate: () => void
 }) {
   const [paymentAmount, setPaymentAmount] = useState("")
   const [paymentMethod, setPaymentMethod] = useState("cash")
@@ -334,6 +375,8 @@ function ReceiptDetailsDialog({
   const [error, setError] = useState("")
 
   const open = Boolean(receipt)
+  const router = useRouter()
+  const isSaleReceipt = receipt && String(receipt.type).toUpperCase() === "SALE"
 
   const handlePrint = () => {
     window.print()
@@ -350,15 +393,36 @@ function ReceiptDetailsDialog({
 
     setSubmitting(true)
     try {
-      const res = await fetch(`/api/receipts/${receipt.id}/payments`, {
+      const body = {
+        amount,
+        method: paymentMethod || "cash",
+        note: paymentNote.trim() || null,
+      }
+      const result = await sendOrQueueMutation({
+        url: `/api/receipts/${receipt.id}/payments`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount,
-          method: paymentMethod || "cash",
-          note: paymentNote.trim() || null,
-        }),
+        body,
       })
+
+      if (result.queued) {
+        toast({
+          title: "Payment saved offline",
+          description: "It will sync when you are back online.",
+        })
+        onMutate()
+        setPaymentAmount("")
+        setPaymentNote("")
+        onClose()
+        return
+      }
+
+      const res = result.response
+      if (!res) {
+        setError("Could not reach the server. Try again.")
+        return
+      }
+
       const data = await res.json()
       if (!res.ok) {
         setError(data?.error || "Failed to record payment")
@@ -402,7 +466,22 @@ function ReceiptDetailsDialog({
             onPrint={handlePrint}
             onClose={onClose}
             footerSlot={
-              !receipt.is_paid && (
+              <>
+              {isSaleReceipt && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full print:hidden mb-2"
+                  onClick={() => {
+                    router.push(`/dashboard/sell?type=return&fromReceipt=${receipt.id}`)
+                    onClose()
+                  }}
+                >
+                  <Undo2 className="mr-2 size-4" />
+                  Return items from this sale
+                </Button>
+              )}
+              {!receipt.is_paid && (
                 <div className="border rounded-lg p-3 space-y-3 bg-muted/30 print:hidden">
                   <div>
                     <p className="text-sm font-semibold">Record a payment</p>
@@ -446,7 +525,8 @@ function ReceiptDetailsDialog({
                     {submitting ? "Saving..." : "Record payment"}
                   </Button>
                 </div>
-              )
+              )}
+              </>
             }
           />
         )}

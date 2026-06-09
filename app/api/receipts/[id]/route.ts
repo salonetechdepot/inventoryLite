@@ -27,6 +27,8 @@ export async function GET(
             quantitySold: true,
             unitPriceAtSale: true,
             totalAmount: true,
+            returnCondition: true,
+            returnDisposition: true,
             createdAt: true,
           },
         },
@@ -72,6 +74,8 @@ export async function GET(
           quantity_sold: sale.quantitySold,
           unit_price_at_sale: Number(sale.unitPriceAtSale),
           total_amount: Number(sale.totalAmount),
+          return_condition: sale.returnCondition,
+          return_disposition: sale.returnDisposition,
           created_at: sale.createdAt,
         })),
         payments: receipt.payments.map((p) => ({

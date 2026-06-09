@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { ArrowLeft, Package } from "lucide-react"
@@ -13,7 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { ImageUpload } from "@/components/image-upload"
 import { toast } from "@/hooks/use-toast"
-import { fetchWithOfflineCache, getCachedData, sendOrQueueMutation } from "@/lib/offline-sync"
+import { ProductSpecFields } from "@/components/product-spec-fields"
+import type { ProductSpecifications } from "@/lib/product-specifications"
+import {
+  CATEGORIES_CACHE_KEY,
+  fetchWithOfflineCache,
+  sendOrQueueMutation,
+} from "@/lib/offline-sync"
 
 const fetcher = fetchWithOfflineCache
 
@@ -23,20 +29,18 @@ interface Category {
   icon: string
 }
 
-interface CachedProductCategory {
-  category_id?: string | null
-  category_name?: string | null
-  category_icon?: string | null
-}
-
 export default function NewProductPage() {
   const router = useRouter()
-  const { data: categoriesData } = useSWR<{ categories: Category[] }>("/api/categories", fetcher)
-  const [offlineCategories, setOfflineCategories] = useState<Category[]>([])
-  
+  const { data: categoriesData } = useSWR<{ categories: Category[] }>(
+    CATEGORIES_CACHE_KEY,
+    fetcher
+  )
+
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState("")
   const [unitPrice, setUnitPrice] = useState("")
+  const [costPrice, setCostPrice] = useState("")
+  const [specifications, setSpecifications] = useState<ProductSpecifications>({})
   const [lowStockThreshold, setLowStockThreshold] = useState("5")
   const [categoryId, setCategoryId] = useState("")
   const [scanCode, setScanCode] = useState("")
@@ -46,41 +50,7 @@ export default function NewProductPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    let isMounted = true
-
-    const loadOfflineCategories = async () => {
-      const cachedCategories = await getCachedData<{ categories?: Category[] }>("/api/categories")
-      const cachedList = Array.isArray(cachedCategories?.categories) ? cachedCategories.categories : []
-      if (cachedList.length > 0) {
-        if (isMounted) setOfflineCategories(cachedList)
-        return
-      }
-
-      const cachedProducts = await getCachedData<{ products?: CachedProductCategory[] }>("/api/products")
-      const productList = Array.isArray(cachedProducts?.products) ? cachedProducts.products : []
-      const unique = new Map<string, Category>()
-
-      for (const product of productList) {
-        if (!product?.category_id || !product?.category_name) continue
-        unique.set(product.category_id, {
-          id: product.category_id,
-          name: product.category_name,
-          icon: product.category_icon || "package",
-        })
-      }
-
-      if (isMounted) setOfflineCategories(Array.from(unique.values()))
-    }
-
-    void loadOfflineCategories()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
-  const categories = categoriesData?.categories?.length ? categoriesData.categories : offlineCategories
+  const categories = categoriesData?.categories ?? []
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,6 +68,8 @@ export default function NewProductPage() {
         name: name.trim(),
         quantity: parseInt(quantity) || 0,
         unitPrice: parseFloat(unitPrice) || 0,
+        costPrice: costPrice.trim() ? parseFloat(costPrice) : null,
+        specifications: hasSpecifications ? specifications : null,
         lowStockThreshold: parseInt(lowStockThreshold) || 5,
         categoryId: categoryId || null,
         scanCode: scanCode.trim() || null,
@@ -253,6 +225,9 @@ export default function NewProductPage() {
                 <FieldDescription>
                   Mark this when the item needs model, size, color, or similar spec details
                 </FieldDescription>
+                {hasSpecifications && (
+                  <ProductSpecFields value={specifications} onChange={setSpecifications} />
+                )}
               </Field>
 
               <div className="grid grid-cols-2 gap-4">
@@ -271,7 +246,7 @@ export default function NewProductPage() {
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="unitPrice" className="text-base">Price (NLe)</FieldLabel>
+                  <FieldLabel htmlFor="unitPrice" className="text-base">Sell price (NLe)</FieldLabel>
                   <Input
                     id="unitPrice"
                     type="number"
@@ -282,9 +257,22 @@ export default function NewProductPage() {
                     onChange={(e) => setUnitPrice(e.target.value)}
                     className="h-12 text-base"
                   />
-                  <FieldDescription>Price per item</FieldDescription>
                 </Field>
               </div>
+
+              <Field>
+                <FieldLabel htmlFor="costPrice" className="text-base">Cost price (NLe)</FieldLabel>
+                <Input
+                  id="costPrice"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Optional — for profit in reports"
+                  value={costPrice}
+                  onChange={(e) => setCostPrice(e.target.value)}
+                  className="h-12 text-base"
+                />
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="lowStock" className="text-base">Low Stock Alert</FieldLabel>

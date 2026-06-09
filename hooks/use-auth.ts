@@ -6,6 +6,7 @@ import { fetchWithOfflineCache } from "@/lib/offline-sync"
 interface User {
   id: string
   email: string
+  phone_e164?: string | null
   business_name: string
   theme_color?: string | null
   shop_logo_url?: string | null

@@ -1,14 +1,29 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import useSWR from "swr"
 import Link from "next/link"
-import { Package, AlertTriangle, TrendingUp, ShoppingCart, Plus, ArrowRight, Undo2 } from "lucide-react"
+import {
+  Package,
+  AlertTriangle,
+  TrendingUp,
+  ShoppingCart,
+  Plus,
+  ArrowRight,
+  Undo2,
+  WifiOff,
+} from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/hooks/use-auth"
-import { fetchWithOfflineCache } from "@/lib/offline-sync"
+import { cn } from "@/lib/utils"
+import {
+  DASHBOARD_STATS_CACHE_KEY,
+  fetchWithOfflineCache,
+  getCacheUpdatedAt,
+} from "@/lib/offline-sync"
 
 const fetcher = fetchWithOfflineCache
 
@@ -37,13 +52,36 @@ interface LowStockProduct {
   low_stock_threshold: number
 }
 
+function formatCacheAge(updatedAt: number) {
+  const minutes = Math.floor((Date.now() - updatedAt) / 60000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return new Date(updatedAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 export default function DashboardPage() {
   const { user } = useAuth()
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<number | null>(null)
+
   const { data, isLoading } = useSWR<{ stats: DashboardStats; lowStockProducts: LowStockProduct[] }>(
-    "/api/dashboard/stats",
+    DASHBOARD_STATS_CACHE_KEY,
     fetcher,
     { refreshInterval: 30000 }
   )
+
+  const isOffline = typeof navigator !== "undefined" && !navigator.onLine
+  const showStaleBanner = Boolean(data) && isOffline
+
+  useEffect(() => {
+    void getCacheUpdatedAt(DASHBOARD_STATS_CACHE_KEY).then(setCacheUpdatedAt)
+  }, [data])
 
   const stats = data?.stats
   const lowStockProducts = data?.lowStockProducts || []
@@ -57,6 +95,26 @@ export default function DashboardPage() {
         </h1>
         <p className="text-muted-foreground">Here&apos;s your inventory overview</p>
       </header>
+
+      {showStaleBanner && (
+        <div
+          className={cn(
+            "mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+            isOffline
+              ? "border-warning/40 bg-warning/10 text-warning-foreground"
+              : "border-muted bg-muted/50 text-muted-foreground"
+          )}
+        >
+          <WifiOff className="size-4 shrink-0 mt-0.5" />
+          <p>
+            <>
+              <span className="font-medium">You&apos;re offline.</span> Showing saved overview
+              {cacheUpdatedAt ? ` from ${formatCacheAge(cacheUpdatedAt)}` : ""}. Figures may
+              change after sync.
+            </>
+          </p>
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">

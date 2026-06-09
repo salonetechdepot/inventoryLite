@@ -29,6 +29,13 @@ import { fetchWithOfflineCache, RETURN_RECEIPTS_CACHE_KEY } from "@/lib/offline-
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { cn } from "@/lib/utils"
+import {
+  formatReturnCondition,
+  formatReturnDisposition,
+  restockQuantityForLine,
+  type ReturnCondition,
+  type ReturnDisposition,
+} from "@/lib/return-inventory"
 
 const fetcher = fetchWithOfflineCache
 
@@ -116,6 +123,8 @@ function receiptToViewData(r: ApiReceipt): ReceiptData {
       quantity_sold: line.quantity_sold,
       unit_price_at_sale: line.unit_price_at_sale,
       total_amount: line.total_amount,
+      return_condition: line.return_condition,
+      return_disposition: line.return_disposition,
     })),
     payments: r.payments ?? [],
   }
@@ -199,12 +208,21 @@ export default function ReturnsPage() {
     (sum, r) => sum + r.sales.reduce((s, line) => s + Number(line.quantity_sold || 0), 0),
     0
   )
-  const uniqueCustomers = new Set(
-    filteredReceipts
-      .map((r) => r.customer_phone || r.customer_name)
-      .filter(Boolean)
-  ).size
-
+  const totalRestocked = filteredReceipts.reduce(
+    (sum, r) =>
+      sum +
+      r.sales.reduce(
+        (s, line) =>
+          s +
+          restockQuantityForLine(
+            Number(line.quantity_sold || 0),
+            line.return_disposition as ReturnDisposition | null | undefined
+          ),
+        0
+      ),
+    0
+  )
+  const totalDiscarded = Math.max(0, totalItemsReturned - totalRestocked)
   const printReceipt = () => window.print()
 
   return (
@@ -306,7 +324,7 @@ export default function ReturnsPage() {
       </header>
 
       <div className="p-4 space-y-4">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <SummaryTile
             icon={<Undo2 className="size-4" />}
             label="Value"
@@ -316,15 +334,22 @@ export default function ReturnsPage() {
           />
           <SummaryTile
             icon={<Package className="size-4" />}
-            label="Items"
+            label="Returned"
             isLoading={isLoading}
             value={String(totalItemsReturned)}
           />
           <SummaryTile
-            icon={<User className="size-4" />}
-            label="Customers"
+            icon={<Package className="size-4" />}
+            label="Restocked"
             isLoading={isLoading}
-            value={String(uniqueCustomers)}
+            value={String(totalRestocked)}
+            tone="primary"
+          />
+          <SummaryTile
+            icon={<Package className="size-4" />}
+            label="Discarded"
+            isLoading={isLoading}
+            value={String(totalDiscarded)}
           />
         </div>
 
@@ -359,7 +384,7 @@ export default function ReturnsPage() {
             </p>
             {allReceipts.length === 0 ? (
               <Button asChild>
-                <Link href="/dashboard/sell">Go to Sell / Return</Link>
+                <Link href="/dashboard/sell?type=return">Record a return</Link>
               </Button>
             ) : (
               <Button
@@ -424,6 +449,35 @@ export default function ReturnsPage() {
                             {receipt.item_count} line{receipt.item_count === 1 ? "" : "s"} ·{" "}
                             {formatTime(receipt.created_at)}
                           </p>
+                          {receipt.sales.some(
+                            (s) => s.return_condition || s.return_disposition
+                          ) && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">
+                              {receipt.sales
+                                .map((s) => {
+                                  const parts: string[] = []
+                                  if (s.return_condition) {
+                                    parts.push(
+                                      formatReturnCondition(
+                                        s.return_condition as ReturnCondition
+                                      )
+                                    )
+                                  }
+                                  if (s.return_disposition) {
+                                    parts.push(
+                                      formatReturnDisposition(
+                                        s.return_disposition as ReturnDisposition
+                                      )
+                                    )
+                                  }
+                                  return parts.length
+                                    ? `${s.product_name}: ${parts.join(" · ")}`
+                                    : null
+                                })
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="font-semibold text-primary whitespace-nowrap">
@@ -465,6 +519,15 @@ export default function ReturnsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-background/95 backdrop-blur p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <Button asChild size="lg" className="w-full h-12 text-base font-semibold">
+          <Link href="/dashboard/sell?type=return">
+            <Undo2 className="mr-2 size-5" />
+            Record return
+          </Link>
+        </Button>
+      </div>
     </main>
   )
 }

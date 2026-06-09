@@ -14,8 +14,14 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ImageUpload } from "@/components/image-upload"
+import { ProductSpecFields } from "@/components/product-spec-fields"
+import type { ProductSpecifications } from "@/lib/product-specifications"
 import { toast } from "@/hooks/use-toast"
-import { fetchWithOfflineCache, sendOrQueueMutation } from "@/lib/offline-sync"
+import {
+  CATEGORIES_CACHE_KEY,
+  fetchWithOfflineCache,
+  sendOrQueueMutation,
+} from "@/lib/offline-sync"
 
 const fetcher = fetchWithOfflineCache
 
@@ -24,12 +30,14 @@ interface Product {
   name: string
   quantity: number
   unit_price: number
+  cost_price: number | null
   low_stock_threshold: number
   category_id: string | null
   image_url: string | null
   scan_code: string | null
   tags: string[]
   has_specifications: boolean
+  specifications: ProductSpecifications | null
 }
 
 interface Category {
@@ -47,11 +55,16 @@ export default function EditProductPage() {
     `/api/products/${productId}`,
     fetcher
   )
-  const { data: categoriesData } = useSWR<{ categories: Category[] }>("/api/categories", fetcher)
+  const { data: categoriesData } = useSWR<{ categories: Category[] }>(
+    CATEGORIES_CACHE_KEY,
+    fetcher
+  )
   
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState("")
   const [unitPrice, setUnitPrice] = useState("")
+  const [costPrice, setCostPrice] = useState("")
+  const [specifications, setSpecifications] = useState<ProductSpecifications>({})
   const [lowStockThreshold, setLowStockThreshold] = useState("")
   const [categoryId, setCategoryId] = useState("")
   const [scanCode, setScanCode] = useState("")
@@ -70,6 +83,8 @@ export default function EditProductPage() {
       setName(p.name)
       setQuantity(p.quantity.toString())
       setUnitPrice(p.unit_price.toString())
+      setCostPrice(p.cost_price != null ? p.cost_price.toString() : "")
+      setSpecifications(p.specifications ?? {})
       setLowStockThreshold(p.low_stock_threshold.toString())
       setCategoryId(p.category_id || "")
       setScanCode(p.scan_code || "")
@@ -95,11 +110,13 @@ export default function EditProductPage() {
         name: name.trim(),
         quantity: parseInt(quantity) || 0,
         unitPrice: parseFloat(unitPrice) || 0,
+        costPrice: costPrice.trim() ? parseFloat(costPrice) : null,
         lowStockThreshold: parseInt(lowStockThreshold) || 5,
         categoryId: categoryId || null,
         scanCode: scanCode.trim() || null,
         tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
         hasSpecifications,
+        specifications: hasSpecifications ? specifications : null,
         imageUrl: imageUrl || null,
       }
 
@@ -306,6 +323,9 @@ export default function EditProductPage() {
                 <FieldDescription>
                   Use this to differentiate products that require spec selection/details
                 </FieldDescription>
+                {hasSpecifications && (
+                  <ProductSpecFields value={specifications} onChange={setSpecifications} />
+                )}
               </Field>
 
               <div className="grid grid-cols-2 gap-4">
@@ -324,7 +344,7 @@ export default function EditProductPage() {
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="unitPrice" className="text-base">Price (NLe)</FieldLabel>
+                  <FieldLabel htmlFor="unitPrice" className="text-base">Sell price (NLe)</FieldLabel>
                   <Input
                     id="unitPrice"
                     type="number"
@@ -335,9 +355,22 @@ export default function EditProductPage() {
                     onChange={(e) => setUnitPrice(e.target.value)}
                     className="h-12 text-base"
                   />
-                  <FieldDescription>Price per item</FieldDescription>
                 </Field>
               </div>
+
+              <Field>
+                <FieldLabel htmlFor="costPrice" className="text-base">Cost price (NLe)</FieldLabel>
+                <Input
+                  id="costPrice"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Optional — for profit in reports"
+                  value={costPrice}
+                  onChange={(e) => setCostPrice(e.target.value)}
+                  className="h-12 text-base"
+                />
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="lowStock" className="text-base">Low Stock Alert</FieldLabel>

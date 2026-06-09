@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import useSWR from "swr"
 import {
   Search,
@@ -49,6 +50,11 @@ import { toast } from "@/hooks/use-toast"
 import { fetchWithOfflineCache, sendOrQueueMutation } from "@/lib/offline-sync"
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
+import {
+  ReturnItemControls,
+  DEFAULT_RETURN_ITEM_STATE,
+  type ReturnItemState,
+} from "@/components/return-item-controls"
 
 const fetcher = fetchWithOfflineCache
 
@@ -78,10 +84,23 @@ interface Product {
 interface CartItem {
   product: Product
   quantity: number
+  returnCondition?: ReturnItemState["returnCondition"]
+  returnDisposition?: ReturnItemState["returnDisposition"]
 }
 
-export default function SellPage() {
+function withReturnDefaults(item: CartItem, isReturn: boolean): CartItem {
+  if (!isReturn) return item
+  return {
+    ...item,
+    returnCondition: item.returnCondition ?? DEFAULT_RETURN_ITEM_STATE.returnCondition,
+    returnDisposition:
+      item.returnDisposition ?? DEFAULT_RETURN_ITEM_STATE.returnDisposition,
+  }
+}
+
+function SellPageContent() {
   const { user } = useAuth()
+  const searchParams = useSearchParams()
   const [search, setSearch] = useState("")
   const [cart, setCart] = useState<CartItem[]>([])
   const [showReceipt, setShowReceipt] = useState(false)
@@ -96,7 +115,28 @@ export default function SellPage() {
   const [showOversellConfirm, setShowOversellConfirm] = useState(false)
   const [oversellProduct, setOversellProduct] = useState<Product | null>(null)
   const [oversellQty, setOversellQty] = useState(1)
-  const [transactionType, setTransactionType] = useState<"sale" | "return">("sale")
+  const [transactionType, setTransactionType] = useState<"sale" | "return">(() =>
+    searchParams.get("type") === "return" ? "return" : "sale"
+  )
+  const [originalReceiptId, setOriginalReceiptId] = useState<string | null>(null)
+  const [returnableMax, setReturnableMax] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    if (searchParams.get("type") === "return") {
+      setTransactionType("return")
+    }
+    const from = searchParams.get("fromReceipt")
+    if (from) {
+      setOriginalReceiptId(from)
+      setTransactionType("return")
+    }
+  }, [searchParams])
+
+  useEffect(() => {
+    if (transactionType === "return") {
+      setCart((prev) => prev.map((item) => withReturnDefaults(item, true)))
+    }
+  }, [transactionType])
   const [customerName, setCustomerName] = useState("")
   const [customerPhone, setCustomerPhone] = useState("")
   const [discountAmount, setDiscountAmount] = useState("0")
@@ -111,6 +151,44 @@ export default function SellPage() {
   )
 
   const products = data?.products || []
+
+  useEffect(() => {
+    const from = searchParams.get("fromReceipt")
+    if (!from || products.length === 0) return
+
+    const loadReturnable = async () => {
+      try {
+        const res = await fetch(`/api/receipts/${from}/returnable`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.customer_name) setCustomerName(data.customer_name)
+        if (data.customer_phone) setCustomerPhone(data.customer_phone)
+        const maxMap: Record<string, number> = {}
+        const items: CartItem[] = []
+        for (const line of data.lines as Array<{
+          product_id: string
+          returnable_quantity: number
+        }>) {
+          maxMap[line.product_id] = line.returnable_quantity
+          const product = products.find((p) => p.id === line.product_id)
+          if (product && line.returnable_quantity > 0) {
+            items.push(
+              withReturnDefaults(
+                { product, quantity: line.returnable_quantity },
+                true
+              )
+            )
+          }
+        }
+        setReturnableMax(maxMap)
+        if (items.length > 0) setCart(items)
+      } catch {
+        // Offline: user can still add return items manually
+      }
+    }
+
+    void loadReturnable()
+  }, [searchParams, products])
 
   const filteredProducts = products.filter((product) =>
     product.name.toLowerCase().includes(search.toLowerCase())
@@ -149,11 +227,17 @@ export default function SellPage() {
       if (existing) {
         return prev.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
+            ? withReturnDefaults(
+                { ...item, quantity: item.quantity + quantity },
+                transactionType === "return"
+              )
             : item
         )
       }
-      return [...prev, { product, quantity }]
+      return [
+        ...prev,
+        withReturnDefaults({ product, quantity }, transactionType === "return"),
+      ]
     })
   }
 
@@ -164,11 +248,20 @@ export default function SellPage() {
         if (existing) {
           return prev.map((item) =>
             item.product.id === oversellProduct.id
-              ? { ...item, quantity: item.quantity + oversellQty }
+              ? withReturnDefaults(
+                  { ...item, quantity: item.quantity + oversellQty },
+                  transactionType === "return"
+                )
               : item
           )
         }
-        return [...prev, { product: oversellProduct, quantity: oversellQty }]
+        return [
+          ...prev,
+          withReturnDefaults(
+            { product: oversellProduct, quantity: oversellQty },
+            transactionType === "return"
+          ),
+        ]
       })
     }
     setShowOversellConfirm(false)
@@ -184,6 +277,14 @@ export default function SellPage() {
     if (newQty <= 0) {
       removeFromCart(productId)
       return
+    }
+
+    if (transactionType === "return" && originalReceiptId) {
+      const max = returnableMax[productId]
+      if (max !== undefined && newQty > max) {
+        setError(`Max ${max} can be returned for this sale`)
+        return
+      }
     }
 
     if (
@@ -241,6 +342,10 @@ export default function SellPage() {
         items: cart.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
+          ...(transactionType === "return" && {
+            returnCondition: item.returnCondition,
+            returnDisposition: item.returnDisposition,
+          }),
         })),
         type: transactionType,
         customerName: customerName.trim() || null,
@@ -248,6 +353,9 @@ export default function SellPage() {
         discountAmount: discountValue,
         amountPaid: amountPaidValue,
         isPartPayment,
+        ...(originalReceiptId && transactionType === "return"
+          ? { originalReceiptId }
+          : {}),
       }
 
       const { queued, response, conflict } = await sendOrQueueMutation({
@@ -282,12 +390,16 @@ export default function SellPage() {
                   quantity_sold: number
                   unit_price_at_sale: number
                   total_amount: number
+                  return_condition?: string | null
+                  return_disposition?: string | null
                 }) => ({
                   id: sale.id,
                   product_name: sale.product_name,
                   quantity_sold: sale.quantity_sold,
                   unit_price_at_sale: sale.unit_price_at_sale,
                   total_amount: sale.total_amount,
+                  return_condition: sale.return_condition,
+                  return_disposition: sale.return_disposition,
                 })
               ),
               payments:
@@ -331,6 +443,8 @@ export default function SellPage() {
             quantity_sold: item.quantity,
             unit_price_at_sale: item.product.unit_price,
             total_amount: item.quantity * item.product.unit_price,
+            return_condition: item.returnCondition,
+            return_disposition: item.returnDisposition,
           })),
           payments:
             amountPaidValue > 0
@@ -619,7 +733,9 @@ export default function SellPage() {
               {isReturn ? "Review Return" : "Review Sale"}
             </DrawerTitle>
             <DrawerDescription>
-              Confirm cart, customer & payment details.
+              {isReturn
+                ? "Set condition and whether each item goes back to stock or is discarded."
+                : "Confirm cart, customer & payment details."}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -644,8 +760,9 @@ export default function SellPage() {
                 {cart.map((item) => (
                   <div
                     key={item.product.id}
-                    className="flex items-center gap-2 bg-muted/50 rounded-lg p-2"
+                    className="flex flex-col gap-2 bg-muted/50 rounded-lg p-2"
                   >
+                    <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-sm truncate">
                         {item.product.name}
@@ -691,6 +808,29 @@ export default function SellPage() {
                         <X className="size-4" />
                       </Button>
                     </div>
+                    </div>
+                    {isReturn && (
+                      <ReturnItemControls
+                        compact
+                        value={{
+                          returnCondition:
+                            item.returnCondition ??
+                            DEFAULT_RETURN_ITEM_STATE.returnCondition,
+                          returnDisposition:
+                            item.returnDisposition ??
+                            DEFAULT_RETURN_ITEM_STATE.returnDisposition,
+                        }}
+                        onChange={(next) =>
+                          setCart((prev) =>
+                            prev.map((row) =>
+                              row.product.id === item.product.id
+                                ? { ...row, ...next }
+                                : row
+                            )
+                          )
+                        }
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -996,5 +1136,13 @@ export default function SellPage() {
         </DialogContent>
       </Dialog>
     </main>
+  )
+}
+
+export default function SellPage() {
+  return (
+    <Suspense fallback={null}>
+      <SellPageContent />
+    </Suspense>
   )
 }
