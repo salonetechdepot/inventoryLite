@@ -100,6 +100,20 @@ Set `PRIVACY_CONTACT_EMAIL` for the public privacy policy page at `/privacy`.
 - Install prompt appears on the dashboard (production HTTPS).
 - Service worker is disabled in `npm run dev` to avoid stale cache issues.
 
+## Troubleshooting production (ERR_FAILED / blank page)
+
+If the site works in one browser but Edge shows **“can't reach this page” / ERR_FAILED**:
+
+1. **Clear site data** for the Vercel URL (old service worker cache):
+   - Edge → Settings → Cookies and site permissions → See all cookies and site data → search `vercel.app` → Remove
+   - Or DevTools (F12) → Application → Service Workers → Unregister → Clear storage
+2. Try **InPrivate** window (extensions off).
+3. Confirm **Vercel deployment succeeded** (Dashboard → Deployments → latest = Ready).
+4. In Vercel **Project → Settings → Environment Variables**, set `DATABASE_URL`, `JWT_SECRET`, and auth keys for **Production**.
+5. Wake **Neon** database (free tier sleeps) before redeploying.
+
+The app registers a service worker in production only; a broken cached worker can block loads until site data is cleared.
+
 ## Scripts
 
 | Command | Description |

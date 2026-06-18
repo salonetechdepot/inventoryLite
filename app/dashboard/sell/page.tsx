@@ -57,6 +57,7 @@ import {
   DEFAULT_RETURN_ITEM_STATE,
   type ReturnItemState,
 } from "@/components/return-item-controls"
+import { SellBarcodeScannerDialog } from "@/components/sell-barcode-scanner-dialog"
 import {
   formatSpecifications,
   type ProductSpecifications,
@@ -119,7 +120,6 @@ function SellPageContent() {
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null)
   const [lastReceiptOffline, setLastReceiptOffline] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
-  const [scannerError, setScannerError] = useState("")
   const [showOversellConfirm, setShowOversellConfirm] = useState(false)
   const [oversellProduct, setOversellProduct] = useState<Product | null>(null)
   const [oversellQty, setOversellQty] = useState(1)
@@ -155,8 +155,7 @@ function SellPageContent() {
   const [discountAmount, setDiscountAmount] = useState("0")
   const [amountPaid, setAmountPaid] = useState("0")
   const [isPartPayment, setIsPartPayment] = useState(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, mutate } = useSWR<{ products: Product[] }>(
     "/api/products",
@@ -497,38 +496,6 @@ function SellPageContent() {
     }
   }
 
-  const startScanner = async () => {
-    setScannerError("")
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-      }
-      setShowScanner(true)
-    } catch {
-      setScannerError("Could not access camera. Please allow camera permission.")
-    }
-  }
-
-  const stopScanner = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-    setShowScanner(false)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-      }
-    }
-  }, [])
-
   const handleScanInput = (code: string) => {
     const trimmedCode = code.trim().toLowerCase()
     if (!trimmedCode) return
@@ -543,6 +510,16 @@ function SellPageContent() {
     if (matchedProduct) {
       addToCart(matchedProduct)
       setSearch("")
+      toast({
+        title: "Added to cart",
+        description: matchedProduct.name,
+      })
+    } else {
+      toast({
+        title: "Product not found",
+        description: `No product with scan code "${code.trim()}". Add it under Products first.`,
+        variant: "destructive",
+      })
     }
   }
 
@@ -565,7 +542,7 @@ function SellPageContent() {
               variant="outline"
               size="icon"
               className="size-11"
-              onClick={startScanner}
+              onClick={() => setShowScanner(true)}
               aria-label="Open scanner"
             >
               <ScanLine className="size-5" />
@@ -629,14 +606,19 @@ function SellPageContent() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               type="search"
               placeholder="Search or scan products..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleScanInput(search)
+                if (e.key === "Enter") {
+                  handleScanInput(search)
+                  setSearch("")
+                }
               }}
               className="pl-10 h-12 text-base"
+              autoComplete="off"
             />
           </div>
         </div>
@@ -1049,59 +1031,11 @@ function SellPageContent() {
         </DrawerContent>
       </Drawer>
 
-      {/* Scanner Dialog */}
-      <Dialog open={showScanner} onOpenChange={(open) => !open && stopScanner()}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Scan Barcode / QR Code</DialogTitle>
-            <DialogDescription>
-              Point your camera at the barcode or QR code
-            </DialogDescription>
-          </DialogHeader>
-
-          {scannerError ? (
-            <div className="rounded-lg bg-destructive/10 p-4 text-destructive text-center">
-              {scannerError}
-            </div>
-          ) : (
-            <div className="relative aspect-square bg-black rounded-lg overflow-hidden">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="size-full object-cover"
-              />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-3/4 h-1/4 border-2 border-primary rounded-lg" />
-              </div>
-            </div>
-          )}
-
-          <div className="text-center text-sm text-muted-foreground">
-            Or manually enter product code:
-          </div>
-          <Input
-            type="text"
-            placeholder="Enter barcode or product name..."
-            className="h-12"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const input = e.currentTarget.value
-                handleScanInput(input)
-                e.currentTarget.value = ""
-                stopScanner()
-              }
-            }}
-          />
-
-          <DialogFooter>
-            <Button variant="outline" onClick={stopScanner} className="w-full">
-              Cancel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SellBarcodeScannerDialog
+        open={showScanner}
+        onClose={() => setShowScanner(false)}
+        onScan={handleScanInput}
+      />
 
       {/* Receipt Dialog */}
       <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
