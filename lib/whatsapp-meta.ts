@@ -1,10 +1,49 @@
 import { mapWhatsAppSendError } from '@/lib/auth-provider-errors'
 
+type TemplateComponent =
+  | { type: 'body'; parameters: { type: 'text'; text: string }[] }
+  | {
+      type: 'button'
+      sub_type: 'url'
+      index: string
+      parameters: { type: 'text'; text: string }[]
+    }
+
+/** Comma-separated button indices, e.g. "0" or "0,1". Empty / "none" = no URL buttons. */
+function parseUrlButtonIndices(raw: string | undefined): string[] {
+  if (raw === undefined) return []
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed === 'none' || trimmed === 'false') return []
+  return trimmed.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+function buildOtpTemplateComponents(otp: string): TemplateComponent[] {
+  const components: TemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [{ type: 'text', text: otp }],
+    },
+  ]
+
+  const buttonParam = process.env.WHATSAPP_OTP_URL_BUTTON_PARAM?.trim() || otp
+  for (const index of parseUrlButtonIndices(process.env.WHATSAPP_OTP_URL_BUTTON_INDEX)) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index,
+      parameters: [{ type: 'text', text: buttonParam }],
+    })
+  }
+
+  return components
+}
+
 /**
  * Send a one-time code via Meta WhatsApp Cloud API using an approved template.
  *
  * Meta Business: create an authentication or utility template with a body
  * variable for the code (e.g. "Your verification code is {{1}}").
+ * If the template has a dynamic URL button, set WHATSAPP_OTP_URL_BUTTON_INDEX=0.
  *
  * @see https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
  */
@@ -40,12 +79,7 @@ export async function sendWhatsAppOtpTemplate(
     template: {
       name: templateName,
       language: { code: languageCode },
-      components: [
-        {
-          type: 'body',
-          parameters: [{ type: 'text', text: otp }],
-        },
-      ],
+      components: buildOtpTemplateComponents(otp),
     },
   }
 
@@ -68,6 +102,28 @@ export async function sendWhatsAppOtpTemplate(
     const code = (json.error as { code?: number } | undefined)?.code
     console.error('[WhatsApp OTP] API error:', msg, json)
     return { ok: false, error: mapWhatsAppSendError(msg, code) }
+  }
+
+  const messageId = json.messages?.[0]?.id
+  if (!messageId) {
+    console.warn('[WhatsApp OTP] OK response but no message id:', json)
+    return {
+      ok: false,
+      error: 'WhatsApp accepted the request but did not queue a message. Check template and recipient in Meta.',
+    }
+  }
+
+  const maskedTo =
+    toDigits.length > 4 ? `***${toDigits.slice(-4)}` : '****'
+  console.info(
+    `[WhatsApp OTP] queued message_id=${messageId} to=${maskedTo} template=${templateName} (${languageCode})`
+  )
+
+  if (
+    process.env.NODE_ENV === 'development' &&
+    process.env.WHATSAPP_OTP_LOG_IN_DEV === 'true'
+  ) {
+    console.warn(`[WhatsApp OTP] DEV ONLY — code for ${maskedTo}: ${otp}`)
   }
 
   return { ok: true }

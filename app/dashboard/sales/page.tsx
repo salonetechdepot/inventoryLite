@@ -1,9 +1,9 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect, Suspense } from "react"
 import useSWR from "swr"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Receipt as ReceiptIcon,
@@ -35,11 +35,18 @@ import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 
 const fetcher = fetchWithOfflineCache
 
 interface ApiReceipt extends ReceiptData {
   item_count: number
+  original_receipt_id?: string | null
+  original_receipt?: {
+    id: string
+    created_at: string | Date
+    net_amount: number
+  } | null
 }
 
 function formatCurrency(amount: number) {
@@ -103,14 +110,30 @@ function groupReceiptsByDay(receipts: ApiReceipt[]): DailyGroup[] {
 type StatusFilter = "all" | "paid" | "unpaid"
 
 export default function SalesHistoryPage() {
+  return (
+    <Suspense fallback={null}>
+      <SalesHistoryContent />
+    </Suspense>
+  )
+}
+
+function SalesHistoryContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [activeReceipt, setActiveReceipt] = useState<ApiReceipt | null>(null)
   const { user } = useAuth()
+  const searchParams = useSearchParams()
 
   const { data, error, isLoading, mutate } = useSWR<{ receipts: ApiReceipt[] }>(
     SALE_RECEIPTS_CACHE_KEY,
     fetcher
   )
+
+  useEffect(() => {
+    const receiptId = searchParams.get("receipt")
+    if (!receiptId || !data?.receipts?.length) return
+    const match = data.receipts.find((r) => r.id === receiptId)
+    if (match) setActiveReceipt(match)
+  }, [searchParams, data?.receipts])
 
   const isOffline =
     typeof navigator !== "undefined" && !navigator.onLine && Boolean(data)
@@ -296,6 +319,14 @@ export default function SalesHistoryPage() {
                           <p className="font-semibold truncate">
                             {receipt.customer_name || "Walk-in customer"}
                           </p>
+                          {String(receipt.type).toUpperCase() === "RETURN" && (
+                            <Badge
+                              variant="secondary"
+                              className="bg-warning/20 text-warning border-warning/40 h-5 text-[10px]"
+                            >
+                              Return
+                            </Badge>
+                          )}
                           {!receipt.is_paid && (
                             <Badge
                               variant="secondary"
@@ -315,6 +346,15 @@ export default function SalesHistoryPage() {
                           {receipt.item_count === 1 ? "" : "s"} ·{" "}
                           {formatTime(receipt.created_at)}
                         </p>
+                        {receipt.original_receipt_id && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            From sale{" "}
+                            {formatReceiptLinkLabel(
+                              receipt.original_receipt_id,
+                              receipt.original_receipt?.created_at
+                            )}
+                          </p>
+                        )}
                         {receipt.amount_due > 0 && (
                           <p className="text-xs text-warning mt-1">
                             Owes NLe {formatCurrency(receipt.amount_due)}
@@ -377,6 +417,7 @@ function ReceiptDetailsDialog({
   const open = Boolean(receipt)
   const router = useRouter()
   const isSaleReceipt = receipt && String(receipt.type).toUpperCase() === "SALE"
+  const isReturnReceipt = receipt && String(receipt.type).toUpperCase() === "RETURN"
 
   const handlePrint = () => {
     window.print()
@@ -467,6 +508,23 @@ function ReceiptDetailsDialog({
             onClose={onClose}
             footerSlot={
               <>
+              {isReturnReceipt && receipt.original_receipt_id && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full print:hidden mb-2"
+                  onClick={() => {
+                    router.push(`/dashboard/sales?receipt=${receipt.original_receipt_id}`)
+                    onClose()
+                  }}
+                >
+                  View original sale{" "}
+                  {formatReceiptLinkLabel(
+                    receipt.original_receipt_id,
+                    receipt.original_receipt?.created_at
+                  )}
+                </Button>
+              )}
               {isSaleReceipt && (
                 <Button
                   type="button"

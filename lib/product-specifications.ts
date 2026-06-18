@@ -28,3 +28,12 @@ export function formatSpecifications(spec: ProductSpecifications | null | undefi
   if (spec.notes) parts.push(spec.notes)
   return parts.join(' · ')
 }
+
+/** Product name stored on sale lines when specs exist. */
+export function saleLineProductName(
+  name: string,
+  spec: ProductSpecifications | null | undefined
+): string {
+  const formatted = formatSpecifications(spec)
+  return formatted ? `${name} (${formatted})` : name
+}

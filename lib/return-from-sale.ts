@@ -14,7 +14,17 @@ export async function getReturnableLinesForReceipt(
   userId: string,
   originalReceiptId: string
 ): Promise<
-  | { ok: true; lines: ReturnableLine[]; customer_name: string | null; customer_phone: string | null }
+  | {
+      ok: true
+      lines: ReturnableLine[]
+      customer_name: string | null
+      customer_phone: string | null
+      original_receipt: {
+        id: string
+        created_at: Date
+        net_amount: number
+      }
+    }
   | { ok: false; error: string; status: number }
 > {
   const original = await prisma.receipt.findFirst({
@@ -97,6 +107,11 @@ export async function getReturnableLinesForReceipt(
     lines,
     customer_name: original.customerName,
     customer_phone: original.customerPhone,
+    original_receipt: {
+      id: original.id,
+      created_at: original.createdAt,
+      net_amount: Number(original.netAmount),
+    },
   }
 }
 

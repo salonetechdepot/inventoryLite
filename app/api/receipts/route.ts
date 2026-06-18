@@ -30,6 +30,13 @@ export async function GET(request: Request) {
       take: limit,
       skip: offset,
       include: {
+        originalReceipt: {
+          select: {
+            id: true,
+            createdAt: true,
+            netAmount: true,
+          },
+        },
         sales: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -72,6 +79,13 @@ export async function GET(request: Request) {
       is_paid: receipt.isPaid,
       notes: receipt.notes,
       original_receipt_id: receipt.originalReceiptId,
+      original_receipt: receipt.originalReceipt
+        ? {
+            id: receipt.originalReceipt.id,
+            created_at: receipt.originalReceipt.createdAt,
+            net_amount: Number(receipt.originalReceipt.netAmount),
+          }
+        : null,
       created_at: receipt.createdAt,
       updated_at: receipt.updatedAt,
       item_count: receipt.sales.length,

@@ -12,7 +12,10 @@ export async function GET() {
 
     const categories = await prisma.category.findMany({
       where: { userId: session.userId },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }]
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      include: {
+        _count: { select: { products: true } },
+      },
     })
 
     const formattedCategories = categories.map((category) => ({
@@ -20,6 +23,7 @@ export async function GET() {
       name: category.name,
       icon: category.icon,
       is_default: category.isDefault ?? false,
+      product_count: category._count.products,
       created_at: category.createdAt
     }))
 

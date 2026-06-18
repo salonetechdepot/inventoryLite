@@ -1,9 +1,10 @@
 "use client"
 
-import { Check, Printer, Undo2 } from "lucide-react"
+import { Check, Printer, Undo2, Link2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 import {
   formatReturnCondition,
   formatReturnDisposition,
@@ -43,6 +44,12 @@ export interface ReceiptData {
   is_part_payment: boolean
   is_paid: boolean
   notes?: string | null
+  original_receipt_id?: string | null
+  original_receipt?: {
+    id: string
+    created_at: string | Date
+    net_amount: number
+  } | null
   created_at: string | Date
   sales: ReceiptSaleLine[]
   payments?: ReceiptPayment[]
@@ -140,6 +147,27 @@ export function ReceiptView({
           </p>
           {receipt.customer_name && <p>Name: {receipt.customer_name}</p>}
           {receipt.customer_phone && <p>Phone: {receipt.customer_phone}</p>}
+        </div>
+      )}
+
+      {isReturn && receipt.original_receipt_id && (
+        <div className="border rounded-lg p-2 text-sm bg-muted/30">
+          <p className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
+            <Link2 className="size-3" />
+            Linked to original sale
+          </p>
+          <p className="mt-1">
+            {formatReceiptLinkLabel(
+              receipt.original_receipt_id,
+              receipt.original_receipt?.created_at
+            )}
+            {receipt.original_receipt?.net_amount != null && (
+              <span className="text-muted-foreground">
+                {" "}
+                · {formatPrice(receipt.original_receipt.net_amount)}
+              </span>
+            )}
+          </p>
         </div>
       )}
 

@@ -1,35 +1,111 @@
-# simple-inventory
+# StockEasy — Simple Inventory
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [v0](https://v0.app).
+Inventory and point-of-sale for small businesses in Sierra Leone. Works online and offline after sign-in (installable PWA).
 
-## Built with v0
+## Requirements
 
-This repository is linked to a [v0](https://v0.app) project. You can continue developing by visiting the link below -- start new chats to make changes, and v0 will push commits directly to this repo. Every merge to `main` will automatically deploy.
+- Node.js 20+
+- PostgreSQL database
+- (Optional) Meta WhatsApp Cloud API for phone OTP
+- (Optional) Resend for email OTP
 
-[Continue working on v0 →](https://v0.app/chat/projects/prj_3lfNjwaXMTuQ7h15NDH7dCBfXJ9b)
+## Local setup
 
-## Getting Started
+1. Copy environment variables:
 
-First, run the development server:
+```bash
+cp .env.example .env
+```
+
+2. Set `DATABASE_URL`, `JWT_SECRET`, and auth provider keys in `.env`.
+
+3. Install dependencies and apply migrations:
+
+```bash
+npm install
+npx prisma migrate deploy
+```
+
+4. Start the dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Production deploy
 
-## Learn More
+The build script runs database migrations automatically before building:
 
-To learn more, take a look at the following resources:
+```bash
+npm run build
+npm start
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [v0 Documentation](https://v0.app/docs) - learn about v0 and how to use it.
+On Vercel or similar hosts, set the same env vars as in `.env.example`. The `build` script runs:
 
-<a href="https://v0.app/chat/api/kiro/clone/sahrmbayo/simple-inventory" alt="Open in Kiro"><img src="https://pdgvvgmkdvyeydso.public.blob.vercel-storage.com/open%20in%20kiro.svg?sanitize=true" /></a>
+1. `prisma generate`
+2. `prisma migrate deploy` — applies pending migrations to `DATABASE_URL`
+3. `next build`
+
+Ensure `DATABASE_URL` is available at **build time** so migrations can run.
+
+### Required environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Session signing (long random string) |
+| `APP_NAME` | Shown in emails and legal pages |
+
+### WhatsApp OTP (optional)
+
+| Variable | Purpose |
+|----------|---------|
+| `WHATSAPP_PHONE_NUMBER_ID` | Meta WhatsApp phone number ID |
+| `WHATSAPP_ACCESS_TOKEN` | Permanent system user token (production) |
+| `WHATSAPP_OTP_TEMPLATE_NAME` | Approved template name |
+| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language (e.g. `en`) |
+| `WHATSAPP_OTP_URL_BUTTON_INDEX` | `0` if template has a dynamic URL button |
+
+### Email OTP (optional)
+
+| Variable | Purpose |
+|----------|---------|
+| `RESEND_API_KEY` | Resend API key |
+| `RESEND_FROM_EMAIL` | Verified sender address |
+
+### Operator console (developer only)
+
+This is **not** part of the shop app UI. Shop owners never see it.
+
+1. Add your operator email(s) to `.env`:
+   ```env
+   ADMIN_EMAILS="you@example.com"
+   ```
+2. Sign in to StockEasy normally (same OTP login as shops).
+3. Open **`/admin`** directly in the browser (bookmark it).
+
+From there you can view platform stats, search all registered shops, inspect each account’s usage, and **permanently delete** a user plus all their data. Operator accounts listed in `ADMIN_EMAILS` cannot be deleted from the console.
+
+### Privacy
+
+Set `PRIVACY_CONTACT_EMAIL` for the public privacy policy page at `/privacy`.
+
+## Offline & install
+
+- Sign in **once while online** (OTP). Session stays on device.
+- Dashboard data caches locally; sales and product edits queue when offline.
+- Install prompt appears on the dashboard (production HTTPS).
+- Service worker is disabled in `npm run dev` to avoid stale cache issues.
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Development server |
+| `npm run build` | Migrate DB + production build |
+| `npm start` | Run production server |
+| `npx prisma migrate deploy` | Apply migrations manually |
+| `npx prisma studio` | Browse database |

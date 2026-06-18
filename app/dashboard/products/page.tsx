@@ -3,7 +3,7 @@
 import { useState } from "react"
 import useSWR from "swr"
 import Link from "next/link"
-import { Plus, Search, Package } from "lucide-react"
+import { Plus, Search, Package, FolderOpen } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -47,14 +47,22 @@ export default function ProductsPage() {
     <main className="p-4">
       {/* Header */}
       <header className="mb-4">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 gap-2">
           <h1 className="text-2xl font-bold">My Products</h1>
-          <Button asChild size="lg" className="h-12">
-            <Link href="/dashboard/products/new">
-              <Plus className="mr-1 size-5" />
-              Add
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" size="lg" className="h-12">
+              <Link href="/dashboard/categories">
+                <FolderOpen className="mr-1 size-5" />
+                Categories
+              </Link>
+            </Button>
+            <Button asChild size="lg" className="h-12">
+              <Link href="/dashboard/products/new">
+                <Plus className="mr-1 size-5" />
+                Add
+              </Link>
+            </Button>
+          </div>
         </div>
         
         {/* Search */}

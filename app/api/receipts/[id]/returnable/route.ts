@@ -21,6 +21,7 @@ export async function GET(
 
     return NextResponse.json({
       original_receipt_id: id,
+      original_receipt: result.original_receipt,
       customer_name: result.customer_name,
       customer_phone: result.customer_phone,
       lines: result.lines,

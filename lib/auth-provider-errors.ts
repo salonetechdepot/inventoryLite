@@ -4,6 +4,12 @@ export function mapWhatsAppSendError(message: string, code?: number): string {
   if (code === 190 || lower.includes('authentication')) {
     return 'WhatsApp sign-in is temporarily unavailable (server token expired). Try email sign-in, or ask the shop admin to refresh the WhatsApp token in Meta Business.'
   }
+  if (code === 131008 || lower.includes('button') && lower.includes('parameter')) {
+    return 'WhatsApp template has a URL button that needs a value. Add WHATSAPP_OTP_URL_BUTTON_INDEX=0 to .env and restart the server, or use a body-only template in Meta.'
+  }
+  if (code === 132001 || lower.includes('does not exist in the translation')) {
+    return 'WhatsApp template name or language does not match Meta. In .env set WHATSAPP_OTP_TEMPLATE_NAME and WHATSAPP_OTP_TEMPLATE_LANGUAGE to exactly what appears under WhatsApp Manager → Message templates (name + language code, e.g. en not en_US). Try email sign-in meanwhile.'
+  }
   if (lower.includes('template') || code === 132000) {
     return 'WhatsApp could not send the code (template issue). Try email sign-in or contact support.'
   }

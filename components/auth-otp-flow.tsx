@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Smartphone, Mail, Store } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,8 +12,14 @@ import { cn } from "@/lib/utils"
 type Mode = "login" | "register"
 type Channel = "whatsapp" | "email"
 
-export function AuthOtpFlow({ mode }: { mode: Mode }) {
+function safeRedirectPath(path: string | null): string {
+  if (path && path.startsWith("/") && !path.startsWith("//")) return path
+  return "/dashboard"
+}
+
+function AuthOtpFlowInner({ mode }: { mode: Mode }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [channel, setChannel] = useState<Channel>("whatsapp")
 
   const [businessName, setBusinessName] = useState("")
@@ -96,7 +102,11 @@ export function AuthOtpFlow({ mode }: { mode: Mode }) {
         setError(data.error || "Verification failed")
         return
       }
-      router.push("/dashboard")
+      router.push(
+        mode === "login"
+          ? safeRedirectPath(searchParams.get("next"))
+          : "/dashboard"
+      )
       router.refresh()
     } catch {
       setError("Something went wrong. Please try again.")
@@ -335,5 +345,13 @@ export function AuthOtpFlow({ mode }: { mode: Mode }) {
         </p>
       )}
     </div>
+  )
+}
+
+export function AuthOtpFlow({ mode }: { mode: Mode }) {
+  return (
+    <Suspense fallback={null}>
+      <AuthOtpFlowInner mode={mode} />
+    </Suspense>
   )
 }

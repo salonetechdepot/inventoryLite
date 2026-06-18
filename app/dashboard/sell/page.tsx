@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import useSWR from "swr"
 import {
   Search,
@@ -16,6 +17,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Link2,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -55,6 +57,11 @@ import {
   DEFAULT_RETURN_ITEM_STATE,
   type ReturnItemState,
 } from "@/components/return-item-controls"
+import {
+  formatSpecifications,
+  type ProductSpecifications,
+} from "@/lib/product-specifications"
+import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 
 const fetcher = fetchWithOfflineCache
 
@@ -75,6 +82,7 @@ interface Product {
   scan_code: string | null
   tags: string[]
   has_specifications: boolean
+  specifications?: ProductSpecifications | null
   quantity: number
   unit_price: number
   category_name: string | null
@@ -119,6 +127,11 @@ function SellPageContent() {
     searchParams.get("type") === "return" ? "return" : "sale"
   )
   const [originalReceiptId, setOriginalReceiptId] = useState<string | null>(null)
+  const [linkedSale, setLinkedSale] = useState<{
+    id: string
+    created_at: string
+    net_amount: number
+  } | null>(null)
   const [returnableMax, setReturnableMax] = useState<Record<string, number>>({})
 
   useEffect(() => {
@@ -163,6 +176,9 @@ function SellPageContent() {
         const data = await res.json()
         if (data.customer_name) setCustomerName(data.customer_name)
         if (data.customer_phone) setCustomerPhone(data.customer_phone)
+        if (data.original_receipt) {
+          setLinkedSale(data.original_receipt)
+        }
         const maxMap: Record<string, number> = {}
         const items: CartItem[] = []
         for (const line of data.lines as Array<{
@@ -584,6 +600,31 @@ function SellPageContent() {
             </button>
           </div>
 
+          {isReturn && originalReceiptId && (
+            <div className="rounded-lg border bg-warning/10 border-warning/30 p-3 text-sm">
+              <p className="font-semibold flex items-center gap-2">
+                <Link2 className="size-4 shrink-0" />
+                Returning from sale{" "}
+                {formatReceiptLinkLabel(
+                  linkedSale?.id ?? originalReceiptId,
+                  linkedSale?.created_at
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Quantities are capped to what is still returnable on that sale.
+                {linkedSale?.net_amount != null && (
+                  <> Original total: {formatPrice(linkedSale.net_amount)}.</>
+                )}
+              </p>
+              <Link
+                href={`/dashboard/sales?receipt=${originalReceiptId}`}
+                className="text-xs text-primary hover:underline mt-1 inline-block"
+              >
+                View original sale in history
+              </Link>
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
@@ -665,6 +706,12 @@ function SellPageContent() {
                         <h3 className="font-semibold truncate text-base">
                           {product.name}
                         </h3>
+                        {product.has_specifications &&
+                          formatSpecifications(product.specifications) && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {formatSpecifications(product.specifications)}
+                            </p>
+                          )}
                         <div className="text-sm text-primary font-semibold">
                           {formatPrice(product.unit_price)}
                         </div>
@@ -764,10 +811,23 @@ function SellPageContent() {
                   >
                     <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">
-                        {item.product.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
+                        <h3 className="font-semibold truncate text-base">
+                          {item.product.name}
+                        </h3>
+                        {item.product.has_specifications &&
+                          formatSpecifications(item.product.specifications) && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {formatSpecifications(item.product.specifications)}
+                            </p>
+                          )}
+                        {isReturn &&
+                          originalReceiptId &&
+                          returnableMax[item.product.id] !== undefined && (
+                            <Badge variant="outline" className="mt-1 h-5 text-[10px]">
+                              Max {returnableMax[item.product.id]} from sale
+                            </Badge>
+                          )}
+                        <p className="text-xs text-muted-foreground">
                         {formatPrice(item.product.unit_price)} ×{" "}
                         {item.quantity} ={" "}
                         <span className="font-semibold">

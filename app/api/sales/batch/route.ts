@@ -10,6 +10,7 @@ import {
   type ReturnDisposition,
 } from '@/lib/return-inventory'
 import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
+import { parseSpecifications, saleLineProductName } from '@/lib/product-specifications'
 
 interface SaleItem {
   productId: string
@@ -81,7 +82,13 @@ export async function POST(request: Request) {
     const productIds = items.map((item) => item.productId)
     const products = await prisma.product.findMany({
       where: { id: { in: productIds }, userId: session.userId },
-      select: { id: true, name: true, quantity: true, unitPrice: true },
+      select: {
+        id: true,
+        name: true,
+        quantity: true,
+        unitPrice: true,
+        specifications: true,
+      },
     })
     const productMap = new Map(products.map((p) => [p.id, p]))
 
@@ -151,6 +158,10 @@ export async function POST(request: Request) {
         const restockQty = isReturn
           ? restockQuantityForLine(item.quantity, item.returnDisposition)
           : 0
+        const lineProductName = saleLineProductName(
+          product.name,
+          parseSpecifications(product.specifications)
+        )
 
         const sale = await tx.sale.create({
           data: {
@@ -158,7 +169,7 @@ export async function POST(request: Request) {
             productId: item.productId,
             receiptId: receipt.id,
             type: isReturn ? 'RETURN' : 'SALE',
-            productName: product.name,
+            productName: lineProductName,
             customerName: customerName?.trim() || null,
             customerPhone: customerPhone?.trim() || null,
             discountAmount: safeDiscount,
