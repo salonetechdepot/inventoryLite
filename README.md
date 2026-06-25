@@ -36,9 +36,10 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Production deploy
 
-The build script runs database migrations automatically before building:
+Run database migrations as a separate release step before building:
 
 ```bash
+npm run db:migrate:deploy
 npm run build
 npm start
 ```
@@ -46,10 +47,9 @@ npm start
 On Vercel or similar hosts, set the same env vars as in `.env.example`. The `build` script runs:
 
 1. `prisma generate`
-2. `prisma migrate deploy` — applies pending migrations to `DATABASE_URL`
-3. `next build`
+2. `next build`
 
-Ensure `DATABASE_URL` is available at **build time** so migrations can run.
+Ensure `DATABASE_URL` is available to the migration step. Do not apply migrations from a public build command.
 
 ### Required environment variables
 
@@ -119,7 +119,8 @@ The app registers a service worker in production only; a broken cached worker ca
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Development server |
-| `npm run build` | Migrate DB + production build |
+| `npm run build` | Generate Prisma client + production build |
 | `npm start` | Run production server |
-| `npx prisma migrate deploy` | Apply migrations manually |
+| `npm run db:migrate:deploy` | Apply production migrations |
+| `npm run db:migrate:status` | Check migration status |
 | `npx prisma studio` | Browse database |

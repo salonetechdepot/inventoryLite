@@ -3,7 +3,29 @@ import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { formatProductResponse } from '@/lib/format-product'
 import { parseSpecifications } from '@/lib/product-specifications'
+import {
+  moneySchema,
+  parseJsonBody,
+  quantitySchema,
+  trimmedString,
+  uuidSchema,
+} from '@/lib/api-validation'
 import type { Prisma } from '@prisma/client'
+import { z } from 'zod'
+
+const productCreateSchema = z.object({
+  name: trimmedString(255),
+  quantity: quantitySchema.optional().default(0),
+  unitPrice: moneySchema.optional().default(0),
+  costPrice: moneySchema.nullish(),
+  lowStockThreshold: quantitySchema.optional().default(5),
+  categoryId: uuidSchema.nullish(),
+  imageUrl: z.string().trim().max(500).nullish(),
+  scanCode: z.string().trim().max(255).nullish(),
+  tags: z.array(z.string().trim().min(1).max(50)).max(25).optional().default([]),
+  hasSpecifications: z.boolean().optional().default(false),
+  specifications: z.unknown().optional(),
+})
 
 // GET all products for current user
 export async function GET() {
@@ -44,6 +66,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const parsed = await parseJsonBody(request, productCreateSchema)
+    if (!parsed.ok) return parsed.response
+
     const {
       name,
       quantity,
@@ -56,10 +81,16 @@ export async function POST(request: Request) {
       tags,
       hasSpecifications,
       specifications,
-    } = await request.json()
+    } = parsed.data
 
-    if (!name) {
-      return NextResponse.json({ error: 'Product name is required' }, { status: 400 })
+    if (categoryId) {
+      const category = await prisma.category.findFirst({
+        where: { id: categoryId, userId: session.userId },
+        select: { id: true },
+      })
+      if (!category) {
+        return NextResponse.json({ error: 'Category not found' }, { status: 404 })
+      }
     }
 
     const product = await prisma.product.create({
@@ -68,13 +99,13 @@ export async function POST(request: Request) {
         categoryId: categoryId || null,
         name,
         scanCode: scanCode?.trim() || null,
-        tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : [],
+        tags,
         hasSpecifications: Boolean(hasSpecifications),
         specifications: parseSpecifications(specifications) as Prisma.InputJsonValue,
-        quantity: quantity || 0,
-        unitPrice: unitPrice || 0,
-        costPrice: costPrice != null && costPrice !== '' ? Number(costPrice) : null,
-        lowStockThreshold: lowStockThreshold || 5,
+        quantity,
+        unitPrice,
+        costPrice: costPrice ?? null,
+        lowStockThreshold,
         imageUrl: imageUrl || null,
       },
       include: {

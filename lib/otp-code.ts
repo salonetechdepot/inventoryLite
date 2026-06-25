@@ -1,7 +1,8 @@
 import { createHmac, randomInt, timingSafeEqual } from 'crypto'
+import { getOtpPepper } from '@/lib/env'
 
 function otpPepper(): string {
-  return process.env.OTP_PEPPER || process.env.JWT_SECRET || 'change-me-in-production'
+  return getOtpPepper()
 }
 
 export function generateSixDigitCode(): string {

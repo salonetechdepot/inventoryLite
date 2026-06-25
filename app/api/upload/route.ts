@@ -2,6 +2,29 @@ import { put, del } from '@vercel/blob'
 import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 
+const VALID_IMAGE_TYPES = new Map([
+  ['image/jpeg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+  ['image/gif', 'gif'],
+])
+
+function userOwnsPath(pathname: string, userId: string) {
+  return [`products/${userId}/`, `branding/${userId}/`].some((prefix) => pathname.startsWith(prefix))
+}
+
+function pathnameFromUploadUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url, 'https://local.invalid')
+    if (parsed.pathname === '/api/file') {
+      return parsed.searchParams.get('pathname')
+    }
+    return url
+  } catch {
+    return null
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession()
@@ -18,8 +41,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate file type
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-    if (!validTypes.includes(file.type)) {
+    const extension = VALID_IMAGE_TYPES.get(file.type)
+    if (!extension) {
       return NextResponse.json({ error: 'Invalid file type. Please upload an image.' }, { status: 400 })
     }
 
@@ -30,9 +53,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create unique filename with user id prefix
-    const extension = file.name.split('.').pop()
     const safeFolder = folder === 'branding' ? 'branding' : 'products'
-    const filename = `${safeFolder}/${session.userId}/${Date.now()}.${extension}`
+    const filename = `${safeFolder}/${session.userId}/${Date.now()}-${crypto.randomUUID()}.${extension}`
 
     const blob = await put(filename, file, {
       access: 'private',
@@ -60,7 +82,12 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'No URL provided' }, { status: 400 })
     }
 
-    await del(url)
+    const pathname = pathnameFromUploadUrl(String(url))
+    if (!pathname || !userOwnsPath(pathname, session.userId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    await del(pathname)
 
     return NextResponse.json({ success: true })
   } catch (error) {

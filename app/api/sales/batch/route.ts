@@ -3,6 +3,14 @@ import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
 import {
+  idempotencyKeyFromRequest,
+  moneySchema,
+  parseJsonBody,
+  positiveQuantitySchema,
+  trimmedString,
+  uuidSchema,
+} from '@/lib/api-validation'
+import {
   isReturnCondition,
   isReturnDisposition,
   restockQuantityForLine,
@@ -11,6 +19,7 @@ import {
 } from '@/lib/return-inventory'
 import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
 import { parseSpecifications, saleLineProductName } from '@/lib/product-specifications'
+import { z } from 'zod'
 
 interface SaleItem {
   productId: string
@@ -21,6 +30,32 @@ interface SaleItem {
 
 type TransactionType = 'sale' | 'return'
 
+const saleItemSchema = z.object({
+  productId: uuidSchema,
+  quantity: positiveQuantitySchema,
+  returnCondition: z.enum(['SEALED', 'OPENED', 'DAMAGED']).optional(),
+  returnDisposition: z.enum(['RESTOCK', 'DISCARD']).optional(),
+})
+
+const batchSaleSchema = z.object({
+  items: z.array(saleItemSchema).min(1).max(100),
+  type: z.enum(['sale', 'return']).optional().default('sale'),
+  customerName: z.string().trim().max(255).optional(),
+  customerPhone: z.string().trim().max(50).optional(),
+  discountAmount: moneySchema.optional().default(0),
+  amountPaid: moneySchema.optional().default(0),
+  isPartPayment: z.boolean().optional().default(false),
+  paymentMethod: trimmedString(50).optional().default('cash'),
+  notes: z.string().trim().max(500).optional(),
+  originalReceiptId: uuidSchema.optional(),
+})
+
+class InsufficientStockError extends Error {
+  constructor(productName: string) {
+    super(`Not enough stock for ${productName}`)
+  }
+}
+
 // POST record a checkout (cart -> single Receipt with multiple Sale lines + initial Payment)
 export async function POST(request: Request) {
   try {
@@ -28,6 +63,26 @@ export async function POST(request: Request) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const idempotencyKey = idempotencyKeyFromRequest(request)
+    if (idempotencyKey) {
+      const existing = await prisma.idempotencyKey.findUnique({
+        where: {
+          userId_route_key: {
+            userId: session.userId,
+            route: 'sales.batch',
+            key: idempotencyKey,
+          },
+        },
+        select: { responseJson: true },
+      })
+      if (existing) {
+        return NextResponse.json(existing.responseJson)
+      }
+    }
+
+    const parsed = await parseJsonBody(request, batchSaleSchema)
+    if (!parsed.ok) return parsed.response
 
     const {
       items,
@@ -40,22 +95,7 @@ export async function POST(request: Request) {
       paymentMethod = 'cash',
       notes,
       originalReceiptId,
-    } = (await request.json()) as {
-      items: SaleItem[]
-      type?: TransactionType
-      customerName?: string
-      customerPhone?: string
-      discountAmount?: number
-      amountPaid?: number
-      isPartPayment?: boolean
-      paymentMethod?: string
-      notes?: string
-      originalReceiptId?: string
-    }
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: 'No items provided' }, { status: 400 })
-    }
+    } = parsed.data
 
     const isReturn = type === 'return'
 
@@ -130,7 +170,7 @@ export async function POST(request: Request) {
     const isPaid = amountDue <= 0
 
     // Single DB transaction: receipt + sales + product stock updates + initial payment
-    const result = await prisma.$transaction(async (tx) => {
+    const response = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
         data: {
           userId: session.userId,
@@ -188,16 +228,23 @@ export async function POST(request: Request) {
 
         if (isReturn) {
           if (restockQty > 0) {
-            await tx.product.update({
-              where: { id: item.productId },
+            await tx.product.updateMany({
+              where: { id: item.productId, userId: session.userId },
               data: { quantity: { increment: restockQty }, updatedAt: new Date() },
             })
           }
         } else {
-          await tx.product.update({
-            where: { id: item.productId },
+          const stockUpdate = await tx.product.updateMany({
+            where: {
+              id: item.productId,
+              userId: session.userId,
+              quantity: { gte: item.quantity },
+            },
             data: { quantity: { decrement: item.quantity }, updatedAt: new Date() },
           })
+          if (stockUpdate.count !== 1) {
+            throw new InsufficientStockError(product.name)
+          }
         }
       }
 
@@ -213,44 +260,60 @@ export async function POST(request: Request) {
         })
       }
 
-      return { receipt, sales: createdSales }
+      const responseJson = {
+        success: true,
+        type: isReturn ? 'return' : 'sale',
+        receipt: {
+          id: receipt.id,
+          type: receipt.type,
+          customer_name: receipt.customerName,
+          customer_phone: receipt.customerPhone,
+          subtotal: Number(receipt.subtotal),
+          discount_amount: Number(receipt.discountAmount),
+          net_amount: Number(receipt.netAmount),
+          amount_paid: Number(receipt.amountPaid),
+          amount_due: Number(receipt.amountDue),
+          change_given: Number(receipt.changeGiven),
+          is_part_payment: receipt.isPartPayment,
+          is_paid: receipt.isPaid,
+          notes: receipt.notes,
+          original_receipt_id: receipt.originalReceiptId,
+          created_at: receipt.createdAt,
+        },
+        sales: createdSales.map((sale) => ({
+          id: sale.id,
+          receipt_id: sale.receiptId,
+          type: sale.type,
+          product_name: sale.productName,
+          quantity_sold: sale.quantitySold,
+          unit_price_at_sale: Number(sale.unitPriceAtSale),
+          total_amount: Number(sale.totalAmount),
+          return_condition: sale.returnCondition,
+          return_disposition: sale.returnDisposition,
+          created_at: sale.createdAt,
+        })),
+        itemCount: items.length,
+      }
+
+      if (idempotencyKey) {
+        await tx.idempotencyKey.create({
+          data: {
+            userId: session.userId,
+            route: 'sales.batch',
+            key: idempotencyKey,
+            responseJson: responseJson as Prisma.InputJsonValue,
+          },
+        })
+      }
+
+      return responseJson
     })
 
-    return NextResponse.json({
-      success: true,
-      type: isReturn ? 'return' : 'sale',
-      receipt: {
-        id: result.receipt.id,
-        type: result.receipt.type,
-        customer_name: result.receipt.customerName,
-        customer_phone: result.receipt.customerPhone,
-        subtotal: Number(result.receipt.subtotal),
-        discount_amount: Number(result.receipt.discountAmount),
-        net_amount: Number(result.receipt.netAmount),
-        amount_paid: Number(result.receipt.amountPaid),
-        amount_due: Number(result.receipt.amountDue),
-        change_given: Number(result.receipt.changeGiven),
-        is_part_payment: result.receipt.isPartPayment,
-        is_paid: result.receipt.isPaid,
-        notes: result.receipt.notes,
-        original_receipt_id: result.receipt.originalReceiptId,
-        created_at: result.receipt.createdAt,
-      },
-      sales: result.sales.map((sale) => ({
-        id: sale.id,
-        receipt_id: sale.receiptId,
-        type: sale.type,
-        product_name: sale.productName,
-        quantity_sold: sale.quantitySold,
-        unit_price_at_sale: Number(sale.unitPriceAtSale),
-        total_amount: Number(sale.totalAmount),
-        return_condition: sale.returnCondition,
-        return_disposition: sale.returnDisposition,
-        created_at: sale.createdAt,
-      })),
-      itemCount: items.length,
-    })
+    return NextResponse.json(response)
   } catch (error) {
+    if (error instanceof InsufficientStockError) {
+      return NextResponse.json({ error: error.message }, { status: 409 })
+    }
     console.error('Batch sale error:', error)
     return NextResponse.json({ error: 'Failed to process sales' }, { status: 500 })
   }

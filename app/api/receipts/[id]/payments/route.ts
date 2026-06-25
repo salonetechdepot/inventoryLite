@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { moneySchema, parseJsonBody, validateRouteId } from '@/lib/api-validation'
+import { z } from 'zod'
+
+const paymentCreateSchema = z.object({
+  amount: moneySchema.refine((amount) => amount > 0, 'Amount must be greater than zero'),
+  method: z.string().trim().min(1).max(50).optional().default('cash'),
+  note: z.string().trim().max(255).optional(),
+})
 
 // POST record an extra payment toward a part-payment receipt.
 // Body: { amount: number, method?: string, note?: string }
@@ -15,12 +23,13 @@ export async function POST(
     }
 
     const { id } = await context.params
-    const { amount, method = 'cash', note } = await request.json()
+    const invalidId = validateRouteId(id)
+    if (invalidId) return invalidId
 
-    const amountValue = Math.max(0, Number(amount || 0))
-    if (amountValue <= 0) {
-      return NextResponse.json({ error: 'Amount must be greater than zero' }, { status: 400 })
-    }
+    const parsed = await parseJsonBody(request, paymentCreateSchema)
+    if (!parsed.ok) return parsed.response
+
+    const { amount: amountValue, method, note } = parsed.data
 
     const result = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.findFirst({

@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { parseJsonBody, validateRouteId } from '@/lib/api-validation'
+import { z } from 'zod'
+
+const stockAdjustSchema = z.object({
+  adjustment: z.coerce.number().int().min(-1_000_000_000).max(1_000_000_000),
+})
 
 // POST adjust stock quantity (add or subtract)
 export async function POST(
@@ -14,11 +20,12 @@ export async function POST(
     }
 
     const { id } = await params
-    const { adjustment } = await request.json()
+    const invalidId = validateRouteId(id)
+    if (invalidId) return invalidId
 
-    if (typeof adjustment !== 'number') {
-      return NextResponse.json({ error: 'Invalid adjustment value' }, { status: 400 })
-    }
+    const parsed = await parseJsonBody(request, stockAdjustSchema)
+    if (!parsed.ok) return parsed.response
+    const { adjustment } = parsed.data
 
     // First check if product exists and belongs to user
     const existing = await prisma.product.findFirst({

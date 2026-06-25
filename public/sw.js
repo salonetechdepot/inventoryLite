@@ -1,11 +1,20 @@
-const SW_VERSION = "v2"
+const SW_VERSION = "v3"
 const STATIC_CACHE = `stockeasy-static-${SW_VERSION}`
 const RUNTIME_CACHE = `stockeasy-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
-const PRECACHE_URLS = ["/", "/login", "/dashboard", OFFLINE_FALLBACK_URL, "/icon.svg"]
+const PRECACHE_URLS = [
+  "/",
+  "/login",
+  "/dashboard",
+  "/dashboard/sell",
+  "/dashboard/products",
+  "/dashboard/sales",
+  "/dashboard/returns",
+  OFFLINE_FALLBACK_URL,
+  "/icon.svg",
+]
 
-/** Always return a valid Response so the browser never shows ERR_FAILED. */
 function offlineResponse() {
   return caches.match(OFFLINE_FALLBACK_URL).then((cached) => {
     if (cached) return cached
@@ -47,39 +56,47 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
 
-  if (url.pathname.startsWith("/api/")) {
+  // API reads/writes are handled by IndexedDB in the app — do not intercept.
+  if (url.pathname.startsWith("/api/")) return
+
+  // Immutable build assets — cache first.
+  if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
-      fetch(request)
-        .then((networkResponse) => {
-          const responseClone = networkResponse.clone()
-          caches.open(RUNTIME_CACHE).then((cache) => {
-            cache.put(request, responseClone)
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((networkResponse) => {
+            if (networkResponse && networkResponse.ok) {
+              const responseClone = networkResponse.clone()
+              caches.open(STATIC_CACHE).then((cache) => {
+                cache.put(request, responseClone)
+              })
+            }
+            return networkResponse
           })
-          return networkResponse
-        })
-        .catch(() => caches.match(request).then((c) => c || offlineResponse()))
+      )
     )
     return
   }
 
+  // Pages and other assets — network first, cache fallback when offline.
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const networkFetch = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.ok) {
-            const responseClone = networkResponse.clone()
-            caches.open(RUNTIME_CACHE).then((cache) => {
-              cache.put(request, responseClone)
-            })
-          }
-          return networkResponse
-        })
-        .catch(() => {
+    fetch(request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.ok) {
+          const responseClone = networkResponse.clone()
+          caches.open(RUNTIME_CACHE).then((cache) => {
+            cache.put(request, responseClone)
+          })
+        }
+        return networkResponse
+      })
+      .catch(() =>
+        caches.match(request).then((cached) => {
+          if (cached) return cached
           if (request.mode === "navigate") return offlineResponse()
-          return cachedResponse || offlineResponse()
+          return offlineResponse()
         })
-
-      return cachedResponse || networkFetch
-    })
+      )
   )
 })

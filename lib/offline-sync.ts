@@ -15,6 +15,75 @@ export const SALE_RECEIPTS_CACHE_KEY = "/api/receipts?type=sale&limit=500&status
 export const CATEGORIES_CACHE_KEY = "/api/categories"
 export const DASHBOARD_STATS_CACHE_KEY = "/api/dashboard/stats"
 export const ANALYTICS_CACHE_KEY = "/api/analytics"
+export const SESSION_CACHE_KEY = "/api/auth/session"
+
+const SESSION_LOCAL_KEY = "stockeasy-session-user-v1"
+
+const EMPTY_DASHBOARD_STATS = {
+  stats: {
+    totalProducts: 0,
+    lowStockCount: 0,
+    outOfStockCount: 0,
+    inventoryValue: 0,
+    todaySalesCount: 0,
+    todaySalesTotal: 0,
+  },
+  lowStockProducts: [] as Array<{
+    id: string
+    name: string
+    quantity: number
+    low_stock_threshold: number
+  }>,
+}
+
+function persistSessionBackup(data: { user: unknown }) {
+  if (!isBrowser()) return
+  try {
+    if (data?.user) {
+      localStorage.setItem(SESSION_LOCAL_KEY, JSON.stringify(data))
+    }
+  } catch {
+    // Ignore quota / private mode errors.
+  }
+}
+
+function loadSessionBackup(): { user: unknown } | null {
+  if (!isBrowser()) return null
+  try {
+    const raw = localStorage.getItem(SESSION_LOCAL_KEY)
+    return raw ? (JSON.parse(raw) as { user: unknown }) : null
+  } catch {
+    return null
+  }
+}
+
+function isOfflineGatewayResponse(response: Response) {
+  const contentType = response.headers.get("content-type") ?? ""
+  return (
+    response.status === 503 ||
+    response.status === 504 ||
+    contentType.includes("text/html")
+  )
+}
+
+async function offlineFallbackForKey<T>(cacheKey: string): Promise<T | null> {
+  if (cacheKey === SESSION_CACHE_KEY) {
+    const backup = loadSessionBackup()
+    if (backup) return backup as T
+    return { user: null } as T
+  }
+  if (cacheKey === ANALYTICS_CACHE_KEY) {
+    const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
+    return { ...EMPTY_ANALYTICS, _offline: true } as T
+  }
+  if (cacheKey === DASHBOARD_STATS_CACHE_KEY) {
+    return EMPTY_DASHBOARD_STATS as T
+  }
+  if (cacheKey === CATEGORIES_CACHE_KEY) {
+    return { categories: [] } as T
+  }
+  return null
+}
 
 export interface QueuedMutation {
   id: string
@@ -900,19 +969,21 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   if (!isOnline) {
     const cached = await getCachedData<T>(cacheKey)
     if (cached !== null) return cached
-    if (cacheKey === ANALYTICS_CACHE_KEY) {
-      const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
-      return { ...EMPTY_ANALYTICS, _offline: true } as T
-    }
+    const fallback = await offlineFallbackForKey<T>(cacheKey)
+    if (fallback !== null) return fallback
     throw new Error("You are offline and there is no cached data available.")
   }
 
   try {
     const res = await fetch(url)
-    if (!res.ok) {
+    if (!res.ok || isOfflineGatewayResponse(res)) {
       throw new Error(`Failed request (${res.status})`)
     }
     const data = (await res.json()) as T
+
+    if (cacheKey === SESSION_CACHE_KEY) {
+      persistSessionBackup(data as { user: unknown })
+    }
     if (cacheKey === PRODUCTS_CACHE_KEY) {
       const previous = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
       const merged = mergeProductsPreservingLocal(data, previous)
@@ -939,10 +1010,8 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   } catch {
     const cached = await getCachedData<T>(cacheKey)
     if (cached !== null) return cached
-    if (cacheKey === ANALYTICS_CACHE_KEY) {
-      const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
-      return { ...EMPTY_ANALYTICS, _offline: true } as T
-    }
+    const fallback = await offlineFallbackForKey<T>(cacheKey)
+    if (fallback !== null) return fallback
     throw new Error("Failed to fetch data and no offline cache was found.")
   }
 }
@@ -970,6 +1039,10 @@ export async function sendOrQueueMutation(input: {
     })
 
     if (!response.ok) {
+      if (isOfflineGatewayResponse(response)) {
+        await enqueueMutation({ ...input, tempId: optimistic.tempId })
+        return { queued: true as const, response: null }
+      }
       if (isConflictStatus(response.status)) {
         return { queued: false as const, response, conflict: true as const }
       }

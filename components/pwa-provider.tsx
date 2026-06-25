@@ -17,7 +17,18 @@ export function PwaProvider() {
 
     const register = async () => {
       try {
-        await navigator.serviceWorker.register("/sw.js")
+        const registration = await navigator.serviceWorker.register("/sw.js")
+
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing
+          if (!worker) return
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "activated" && navigator.serviceWorker.controller) {
+              // New SW (e.g. offline fix) — reload once to use fresh caches.
+              window.location.reload()
+            }
+          })
+        })
       } catch {
         // Ignore registration errors to avoid interrupting app usage.
       }

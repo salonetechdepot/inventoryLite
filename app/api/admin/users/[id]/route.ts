@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { isAdminEmail, requireAdminSession } from '@/lib/admin'
 import { prisma } from '@/lib/prisma'
+import { validateRouteId } from '@/lib/api-validation'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -11,6 +12,8 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params
+  const invalidId = validateRouteId(id)
+  if (invalidId) return invalidId
 
   const user = await prisma.user.findUnique({
     where: { id },
@@ -84,6 +87,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params
+  const invalidId = validateRouteId(id)
+  if (invalidId) return invalidId
 
   if (session.userId === id) {
     return NextResponse.json(

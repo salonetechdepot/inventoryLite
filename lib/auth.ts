@@ -2,10 +2,9 @@ import { cookies } from 'next/headers'
 import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { getJwtSecret } from './env'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'your-secret-key-change-in-production'
-)
+const JWT_SECRET = new TextEncoder().encode(getJwtSecret())
 
 export interface User {
   id: string

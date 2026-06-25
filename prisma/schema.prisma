@@ -22,8 +22,23 @@ model User {
   sales        Sale[]
   receipts     Receipt[]
   payments     Payment[]
+  idempotencyKeys IdempotencyKey[]
 
   @@map("users")
+}
+
+model IdempotencyKey {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  key          String   @db.VarChar(128)
+  route        String   @db.VarChar(100)
+  responseJson Json     @map("response_json")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, route, key], map: "idempotency_keys_user_route_key_unique")
+  @@index([createdAt], map: "idx_idempotency_keys_created_at")
+  @@map("idempotency_keys")
 }
 
 model AuthOtp {

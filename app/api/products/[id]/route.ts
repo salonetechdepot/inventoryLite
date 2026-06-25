@@ -3,7 +3,30 @@ import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { formatProductResponse } from '@/lib/format-product'
 import { parseSpecifications } from '@/lib/product-specifications'
+import {
+  moneySchema,
+  parseJsonBody,
+  quantitySchema,
+  trimmedString,
+  uuidSchema,
+  validateRouteId,
+} from '@/lib/api-validation'
 import type { Prisma } from '@prisma/client'
+import { z } from 'zod'
+
+const productPatchSchema = z.object({
+  name: trimmedString(255).optional(),
+  quantity: quantitySchema.optional(),
+  unitPrice: moneySchema.optional(),
+  costPrice: moneySchema.nullish(),
+  lowStockThreshold: quantitySchema.optional(),
+  categoryId: uuidSchema.nullish(),
+  imageUrl: z.string().trim().max(500).nullish(),
+  scanCode: z.string().trim().max(255).nullish(),
+  tags: z.array(z.string().trim().min(1).max(50)).max(25).optional(),
+  hasSpecifications: z.boolean().optional(),
+  specifications: z.unknown().optional(),
+})
 
 // GET single product
 export async function GET(
@@ -17,6 +40,8 @@ export async function GET(
     }
 
     const { id } = await params
+    const invalidId = validateRouteId(id)
+    if (invalidId) return invalidId
 
     const product = await prisma.product.findFirst({
       where: {
@@ -58,6 +83,12 @@ export async function PATCH(
     }
 
     const { id } = await params
+    const invalidId = validateRouteId(id)
+    if (invalidId) return invalidId
+
+    const parsed = await parseJsonBody(request, productPatchSchema)
+    if (!parsed.ok) return parsed.response
+
     const {
       name,
       quantity,
@@ -70,7 +101,7 @@ export async function PATCH(
       tags,
       hasSpecifications,
       specifications,
-    } = await request.json()
+    } = parsed.data
 
     const existingProduct = await prisma.product.findFirst({
       where: { id, userId: session.userId }
@@ -78,6 +109,16 @@ export async function PATCH(
 
     if (!existingProduct) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+
+    if (categoryId) {
+      const category = await prisma.category.findFirst({
+        where: { id: categoryId, userId: session.userId },
+        select: { id: true },
+      })
+      if (!category) {
+        return NextResponse.json({ error: 'Category not found' }, { status: 404 })
+      }
     }
 
     const product = await prisma.product.update({
@@ -93,12 +134,7 @@ export async function PATCH(
             : (parseSpecifications(specifications) as Prisma.InputJsonValue),
         quantity: quantity ?? undefined,
         unitPrice: unitPrice ?? undefined,
-        costPrice:
-          costPrice === undefined
-            ? undefined
-            : costPrice === null || costPrice === ''
-              ? null
-              : Number(costPrice),
+        costPrice: costPrice === undefined ? undefined : costPrice,
         lowStockThreshold: lowStockThreshold ?? undefined,
         categoryId: categoryId ?? undefined,
         imageUrl: imageUrl ?? null,
@@ -130,6 +166,8 @@ export async function DELETE(
     }
 
     const { id } = await params
+    const invalidId = validateRouteId(id)
+    if (invalidId) return invalidId
 
     const existingProduct = await prisma.product.findFirst({
       where: { id, userId: session.userId },

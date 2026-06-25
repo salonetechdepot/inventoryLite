@@ -1,7 +1,7 @@
 import useSWR from "swr"
 import { useRouter } from "next/navigation"
 import { useCallback } from "react"
-import { fetchWithOfflineCache } from "@/lib/offline-sync"
+import { fetchWithOfflineCache, SESSION_CACHE_KEY } from "@/lib/offline-sync"
 
 interface User {
   id: string
@@ -18,7 +18,7 @@ const fetcher = fetchWithOfflineCache
 export function useAuth() {
   const router = useRouter()
   const { data, error, isLoading, mutate } = useSWR<{ user: User | null }>(
-    "/api/auth/session",
+    SESSION_CACHE_KEY,
     fetcher,
     {
       revalidateOnFocus: false,
