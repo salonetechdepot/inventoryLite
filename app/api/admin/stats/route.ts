@@ -11,15 +11,8 @@ export async function GET() {
   const startOfDay = new Date()
   startOfDay.setHours(0, 0, 0, 0)
 
-  const [
-    users,
-    products,
-    receipts,
-    salesToday,
-    returnsToday,
-    pendingOtps,
-  ] = await Promise.all([
-    prisma.user.count(),
+  const [tenants, products, receipts, salesToday, returnsToday] = await Promise.all([
+    prisma.tenantSettings.count(),
     prisma.product.count(),
     prisma.receipt.count(),
     prisma.receipt.count({
@@ -28,19 +21,17 @@ export async function GET() {
     prisma.receipt.count({
       where: { type: 'RETURN', createdAt: { gte: startOfDay } },
     }),
-    prisma.authOtp.count({
-      where: { expiresAt: { gt: new Date() } },
-    }),
   ])
 
   return NextResponse.json({
     stats: {
-      users,
+      users: tenants,
+      tenants,
       products,
       receipts,
       sales_today: salesToday,
       returns_today: returnsToday,
-      active_otps: pendingOtps,
+      active_otps: 0,
     },
   })
 }

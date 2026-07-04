@@ -16,7 +16,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { name, icon } = await request.json()
 
     const existing = await prisma.category.findFirst({
-      where: { id, userId: session.userId },
+      where: { id, tenantId: session.tenantId },
     })
 
     if (!existing) {
@@ -62,7 +62,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const { id } = await context.params
 
     const existing = await prisma.category.findFirst({
-      where: { id, userId: session.userId },
+      where: { id, tenantId: session.tenantId },
     })
 
     if (!existing) {

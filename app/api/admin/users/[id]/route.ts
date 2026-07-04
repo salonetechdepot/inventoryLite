@@ -15,61 +15,45 @@ export async function GET(_request: Request, context: RouteContext) {
   const invalidId = validateRouteId(id)
   if (invalidId) return invalidId
 
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      email: true,
-      phoneE164: true,
-      businessName: true,
-      themeColor: true,
-      shopLogoUrl: true,
-      createdAt: true,
-      _count: {
-        select: {
-          products: true,
-          receipts: true,
-          sales: true,
-          categories: true,
-          payments: true,
-        },
-      },
-    },
+  const tenant = await prisma.tenantSettings.findUnique({
+    where: { tenantId: id },
   })
 
-  if (!user) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  if (!tenant) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
   }
 
-  const recentReceipts = await prisma.receipt.findMany({
-    where: { userId: id },
-    orderBy: { createdAt: 'desc' },
-    take: 5,
-    select: {
-      id: true,
-      type: true,
-      netAmount: true,
-      createdAt: true,
-    },
-  })
+  const [products, receipts, sales, categories, payments, recentReceipts] =
+    await Promise.all([
+      prisma.product.count({ where: { tenantId: id } }),
+      prisma.receipt.count({ where: { tenantId: id } }),
+      prisma.sale.count({ where: { tenantId: id } }),
+      prisma.category.count({ where: { tenantId: id } }),
+      prisma.payment.count({ where: { tenantId: id } }),
+      prisma.receipt.findMany({
+        where: { tenantId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          type: true,
+          netAmount: true,
+          createdAt: true,
+        },
+      }),
+    ])
 
   return NextResponse.json({
     user: {
-      id: user.id,
-      email: user.email,
-      phone_e164: user.phoneE164,
-      business_name: user.businessName,
-      theme_color: user.themeColor,
-      shop_logo_url: user.shopLogoUrl,
-      created_at: user.createdAt,
-      is_admin: isAdminEmail(user.email),
-      counts: {
-        products: user._count.products,
-        receipts: user._count.receipts,
-        sales: user._count.sales,
-        categories: user._count.categories,
-        payments: user._count.payments,
-      },
+      id: tenant.tenantId,
+      email: tenant.email,
+      phone_e164: tenant.phoneE164,
+      business_name: tenant.businessName,
+      theme_color: tenant.themeColor,
+      shop_logo_url: tenant.shopLogoUrl,
+      created_at: tenant.createdAt,
+      is_admin: isAdminEmail(tenant.email),
+      counts: { products, receipts, sales, categories, payments },
       recent_receipts: recentReceipts.map((r) => ({
         id: r.id,
         type: r.type,
@@ -90,42 +74,35 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const invalidId = validateRouteId(id)
   if (invalidId) return invalidId
 
-  if (session.userId === id) {
+  if (session.tenantId === id) {
     return NextResponse.json(
-      { error: 'You cannot delete your own operator account.' },
+      { error: 'You cannot delete your own tenant data.' },
       { status: 400 }
     )
   }
 
-  const target = await prisma.user.findUnique({
-    where: { id },
-    select: { id: true, email: true, phoneE164: true },
+  const target = await prisma.tenantSettings.findUnique({
+    where: { tenantId: id },
   })
-
   if (!target) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
   }
-
   if (isAdminEmail(target.email)) {
     return NextResponse.json(
-      { error: 'Cannot delete another operator account listed in ADMIN_EMAILS.' },
+      { error: 'Cannot delete an operator tenant listed in ADMIN_EMAILS.' },
       { status: 400 }
     )
   }
 
-  await prisma.authOtp.deleteMany({
-    where: {
-      OR: [
-        { email: target.email },
-        ...(target.phoneE164 ? [{ phoneE164: target.phoneE164 }] : []),
-      ],
-    },
-  })
+  await prisma.$transaction([
+    prisma.payment.deleteMany({ where: { tenantId: id } }),
+    prisma.sale.deleteMany({ where: { tenantId: id } }),
+    prisma.receipt.deleteMany({ where: { tenantId: id } }),
+    prisma.product.deleteMany({ where: { tenantId: id } }),
+    prisma.category.deleteMany({ where: { tenantId: id } }),
+    prisma.idempotencyKey.deleteMany({ where: { tenantId: id } }),
+    prisma.tenantSettings.delete({ where: { tenantId: id } }),
+  ])
 
-  await prisma.user.delete({ where: { id } })
-
-  return NextResponse.json({
-    success: true,
-    deleted: { id: target.id, email: target.email },
-  })
+  return NextResponse.json({ ok: true })
 }

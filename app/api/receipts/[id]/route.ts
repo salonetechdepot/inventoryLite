@@ -16,7 +16,7 @@ export async function GET(
     const { id } = await context.params
 
     const receipt = await prisma.receipt.findFirst({
-      where: { id, userId: session.userId },
+      where: { id, tenantId: session.tenantId },
       include: {
         originalReceipt: {
           select: {

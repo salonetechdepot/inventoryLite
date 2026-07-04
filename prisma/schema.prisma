@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -8,73 +7,49 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email        String     @unique @db.VarChar(255)
-  phoneE164    String?    @unique @map("phone_e164") @db.VarChar(20)
-  passwordHash String     @map("password_hash") @db.VarChar(255)
-  businessName String     @map("business_name") @db.VarChar(255)
-  themeColor   String?    @map("theme_color") @db.VarChar(20)
-  shopLogoUrl  String?    @map("shop_logo_url") @db.VarChar(500)
-  createdAt    DateTime?  @default(now()) @map("created_at") @db.Timestamp(6)
-  categories   Category[]
-  products     Product[]
-  sales        Sale[]
-  receipts     Receipt[]
-  payments     Payment[]
-  idempotencyKeys IdempotencyKey[]
+/// Shop branding / profile for an external-auth tenant (no local User table).
+model TenantSettings {
+  tenantId     String   @id @map("tenant_id") @db.Uuid
+  email        String?  @db.VarChar(255)
+  phoneE164    String?  @map("phone_e164") @db.VarChar(20)
+  businessName String?  @map("business_name") @db.VarChar(255)
+  themeColor   String?  @map("theme_color") @db.VarChar(20)
+  shopLogoUrl  String?  @map("shop_logo_url") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  @@map("users")
+  @@map("tenant_settings")
 }
 
 model IdempotencyKey {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId       String   @map("user_id") @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
   key          String   @db.VarChar(128)
   route        String   @db.VarChar(100)
   responseJson Json     @map("response_json")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, route, key], map: "idempotency_keys_user_route_key_unique")
+  @@unique([tenantId, route, key], map: "idempotency_keys_tenant_route_key_unique")
   @@index([createdAt], map: "idx_idempotency_keys_created_at")
   @@map("idempotency_keys")
 }
 
-model AuthOtp {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  channel     String   @default("whatsapp") @db.VarChar(20)
-  phoneE164   String?  @map("phone_e164") @db.VarChar(20)
-  email       String?  @db.VarChar(255)
-  codeHash    String   @map("code_hash") @db.VarChar(255)
-  expiresAt   DateTime @map("expires_at") @db.Timestamp(6)
-  purpose     String   @db.VarChar(20)
-  pendingJson Json?    @map("pending_json")
-  attempts    Int      @default(0)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-
-  @@index([phoneE164, purpose], map: "auth_otps_phone_purpose_idx")
-  @@index([email, purpose], map: "auth_otps_email_purpose_idx")
-  @@map("auth_otps")
-}
-
 model Category {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String?   @map("user_id") @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
   name      String    @db.VarChar(100)
   icon      String?   @default("package") @db.VarChar(50)
   isDefault Boolean?  @default(false) @map("is_default")
   createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   products  Product[]
 
-  @@index([userId], map: "idx_categories_user_id")
+  @@index([tenantId], map: "idx_categories_tenant_id")
   @@map("categories")
 }
 
 model Product {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId            String?   @map("user_id") @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
   categoryId        String?   @map("category_id") @db.Uuid
   name              String    @db.VarChar(255)
   scanCode          String?   @unique @map("scan_code") @db.VarChar(255)
@@ -88,40 +63,38 @@ model Product {
   imageUrl          String?   @map("image_url") @db.VarChar(500)
   createdAt         DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime? @default(now()) @map("updated_at") @db.Timestamp(6)
-  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   category          Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   sales             Sale[]
 
-  @@index([userId], map: "idx_products_user_id")
+  @@index([tenantId], map: "idx_products_tenant_id")
   @@index([categoryId], map: "idx_products_category_id")
   @@map("products")
 }
 
 model Sale {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String?   @map("user_id") @db.Uuid
-  productId       String?   @map("product_id") @db.Uuid
-  receiptId       String?   @map("receipt_id") @db.Uuid
-  type            SaleType  @default(SALE)
-  productName     String    @map("product_name") @db.VarChar(255)
-  customerName    String?   @map("customer_name") @db.VarChar(255)
-  customerPhone   String?   @map("customer_phone") @db.VarChar(50)
-  discountAmount  Decimal?  @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
-  amountPaid      Decimal?  @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
-  changeGiven     Decimal?  @default(0.00) @map("change_given") @db.Decimal(15, 2)
-  amountDue       Decimal?  @default(0.00) @map("amount_due") @db.Decimal(15, 2)
-  isPartPayment   Boolean   @default(false) @map("is_part_payment")
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  productId          String?             @map("product_id") @db.Uuid
+  receiptId          String?             @map("receipt_id") @db.Uuid
+  type               SaleType            @default(SALE)
+  productName        String              @map("product_name") @db.VarChar(255)
+  customerName       String?             @map("customer_name") @db.VarChar(255)
+  customerPhone      String?             @map("customer_phone") @db.VarChar(50)
+  discountAmount     Decimal?            @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
+  amountPaid         Decimal?            @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
+  changeGiven        Decimal?            @default(0.00) @map("change_given") @db.Decimal(15, 2)
+  amountDue          Decimal?            @default(0.00) @map("amount_due") @db.Decimal(15, 2)
+  isPartPayment      Boolean             @default(false) @map("is_part_payment")
   quantitySold       Int                 @map("quantity_sold")
   unitPriceAtSale    Decimal             @map("unit_price_at_sale") @db.Decimal(15, 2)
   totalAmount        Decimal             @map("total_amount") @db.Decimal(15, 2)
   returnCondition    ReturnCondition?    @map("return_condition")
   returnDisposition  ReturnDisposition?  @map("return_disposition")
   createdAt          DateTime?           @default(now()) @map("created_at") @db.Timestamp(6)
-  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product         Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
-  receipt         Receipt?  @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  product            Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  receipt            Receipt?            @relation(fields: [receiptId], references: [id], onDelete: SetNull)
 
-  @@index([userId], map: "idx_sales_user_id")
+  @@index([tenantId], map: "idx_sales_tenant_id")
   @@index([type], map: "idx_sales_type")
   @@index([createdAt], map: "idx_sales_created_at")
   @@index([receiptId], map: "idx_sales_receipt_id")
@@ -129,30 +102,29 @@ model Sale {
 }
 
 model Receipt {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId         String    @map("user_id") @db.Uuid
-  type           SaleType  @default(SALE)
-  customerName   String?   @map("customer_name") @db.VarChar(255)
-  customerPhone  String?   @map("customer_phone") @db.VarChar(50)
-  subtotal       Decimal   @default(0.00) @db.Decimal(15, 2)
-  discountAmount Decimal   @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
-  netAmount      Decimal   @default(0.00) @map("net_amount") @db.Decimal(15, 2)
-  amountPaid     Decimal   @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
-  amountDue      Decimal   @default(0.00) @map("amount_due") @db.Decimal(15, 2)
-  changeGiven    Decimal   @default(0.00) @map("change_given") @db.Decimal(15, 2)
-  isPartPayment  Boolean   @default(false) @map("is_part_payment")
-  isPaid         Boolean   @default(true) @map("is_paid")
-  notes              String?   @db.VarChar(500)
-  originalReceiptId  String?   @map("original_receipt_id") @db.Uuid
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  originalReceipt    Receipt?  @relation("ReceiptReturns", fields: [originalReceiptId], references: [id], onDelete: SetNull)
-  linkedReturns      Receipt[] @relation("ReceiptReturns")
-  sales              Sale[]
-  payments           Payment[]
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  type              SaleType  @default(SALE)
+  customerName      String?   @map("customer_name") @db.VarChar(255)
+  customerPhone     String?   @map("customer_phone") @db.VarChar(50)
+  subtotal          Decimal   @default(0.00) @db.Decimal(15, 2)
+  discountAmount    Decimal   @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
+  netAmount         Decimal   @default(0.00) @map("net_amount") @db.Decimal(15, 2)
+  amountPaid        Decimal   @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
+  amountDue         Decimal   @default(0.00) @map("amount_due") @db.Decimal(15, 2)
+  changeGiven       Decimal   @default(0.00) @map("change_given") @db.Decimal(15, 2)
+  isPartPayment     Boolean   @default(false) @map("is_part_payment")
+  isPaid            Boolean   @default(true) @map("is_paid")
+  notes             String?   @db.VarChar(500)
+  originalReceiptId String?   @map("original_receipt_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
+  originalReceipt   Receipt?  @relation("ReceiptReturns", fields: [originalReceiptId], references: [id], onDelete: SetNull)
+  linkedReturns     Receipt[] @relation("ReceiptReturns")
+  sales             Sale[]
+  payments          Payment[]
 
-  @@index([userId], map: "idx_receipts_user_id")
+  @@index([tenantId], map: "idx_receipts_tenant_id")
   @@index([originalReceiptId], map: "idx_receipts_original_receipt_id")
   @@index([createdAt], map: "idx_receipts_created_at")
   @@index([isPaid], map: "idx_receipts_is_paid")
@@ -161,17 +133,16 @@ model Receipt {
 
 model Payment {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
   receiptId String   @map("receipt_id") @db.Uuid
   amount    Decimal  @db.Decimal(15, 2)
   method    String?  @default("cash") @db.VarChar(50)
   note      String?  @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   receipt   Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
 
   @@index([receiptId], map: "idx_payments_receipt_id")
-  @@index([userId], map: "idx_payments_user_id")
+  @@index([tenantId], map: "idx_payments_tenant_id")
   @@map("payments")
 }
 

@@ -46,7 +46,7 @@ export async function GET(
     const product = await prisma.product.findFirst({
       where: {
         id,
-        userId: session.userId
+        tenantId: session.tenantId
       },
       include: {
         category: {
@@ -104,7 +104,7 @@ export async function PATCH(
     } = parsed.data
 
     const existingProduct = await prisma.product.findFirst({
-      where: { id, userId: session.userId }
+      where: { id, tenantId: session.tenantId }
     })
 
     if (!existingProduct) {
@@ -113,7 +113,7 @@ export async function PATCH(
 
     if (categoryId) {
       const category = await prisma.category.findFirst({
-        where: { id: categoryId, userId: session.userId },
+        where: { id: categoryId, tenantId: session.tenantId },
         select: { id: true },
       })
       if (!category) {
@@ -170,7 +170,7 @@ export async function DELETE(
     if (invalidId) return invalidId
 
     const existingProduct = await prisma.product.findFirst({
-      where: { id, userId: session.userId },
+      where: { id, tenantId: session.tenantId },
       select: { id: true }
     })
 

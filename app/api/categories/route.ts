@@ -11,7 +11,7 @@ export async function GET() {
     }
 
     const categories = await prisma.category.findMany({
-      where: { userId: session.userId },
+      where: { tenantId: session.tenantId },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
       include: {
         _count: { select: { products: true } },
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     const category = await prisma.category.create({
       data: {
-        userId: session.userId,
+        tenantId: session.tenantId,
         name,
         icon: icon || 'package'
       }

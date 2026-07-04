@@ -1,4 +1,23 @@
 /** @type {import('next').NextConfig} */
+
+function loginApiConnectOrigin() {
+  const raw = (process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || '').trim()
+  if (!raw) return ''
+  try {
+    return new URL(raw).origin
+  } catch {
+    return ''
+  }
+}
+
+const loginApiOrigin = loginApiConnectOrigin()
+const connectSrc = [
+  "'self'",
+  'https://*.vercel-storage.com',
+  'https://*.public.blob.vercel-storage.com',
+  ...(loginApiOrigin ? [loginApiOrigin] : []),
+].join(' ')
+
 const nextConfig = {
   serverExternalPackages: ['@prisma/client', '.prisma/client'],
   images: {
@@ -9,7 +28,7 @@ const nextConfig = {
       {
         key: 'Content-Security-Policy',
         value:
-          "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' https://*.vercel-storage.com https://*.public.blob.vercel-storage.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+          `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src ${connectSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
       },
       { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
       { key: 'X-Content-Type-Options', value: 'nosniff' },

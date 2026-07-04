@@ -29,7 +29,7 @@ export async function POST(
 
     // First check if product exists and belongs to user
     const existing = await prisma.product.findFirst({
-      where: { id, userId: session.userId },
+      where: { id, tenantId: session.tenantId },
       select: { quantity: true, name: true }
     })
 

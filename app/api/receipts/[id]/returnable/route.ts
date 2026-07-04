@@ -13,7 +13,7 @@ export async function GET(
     }
 
     const { id } = await context.params
-    const result = await getReturnableLinesForReceipt(session.userId, id)
+    const result = await getReturnableLinesForReceipt(session.tenantId, id)
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status })

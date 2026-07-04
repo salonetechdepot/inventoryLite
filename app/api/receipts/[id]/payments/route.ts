@@ -33,7 +33,7 @@ export async function POST(
 
     const result = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.findFirst({
-        where: { id, userId: session.userId },
+        where: { id, tenantId: session.tenantId },
         include: { payments: true },
       })
       if (!receipt) return { notFound: true as const }
@@ -59,7 +59,7 @@ export async function POST(
 
       await tx.payment.create({
         data: {
-          userId: session.userId,
+          tenantId: session.tenantId,
           receiptId: receipt.id,
           amount: amountValue,
           method: (method || 'cash').toString().slice(0, 50),

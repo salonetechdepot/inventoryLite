@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const typeFilter = searchParams.get('type')
     const statusFilter = searchParams.get('status') || 'all'
 
-    const where: Prisma.ReceiptWhereInput = { userId: session.userId }
+    const where: Prisma.ReceiptWhereInput = { tenantId: session.tenantId }
     if (typeFilter === 'sale') where.type = 'SALE'
     if (typeFilter === 'return') where.type = 'RETURN'
     if (statusFilter === 'paid') where.isPaid = true

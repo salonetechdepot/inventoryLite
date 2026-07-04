@@ -87,7 +87,6 @@ interface Product {
   quantity: number
   unit_price: number
   category_name: string | null
-  image_url: string | null
 }
 
 interface CartItem {
@@ -363,8 +362,8 @@ function SellPageContent() {
           }),
         })),
         type: transactionType,
-        customerName: customerName.trim() || null,
-        customerPhone: customerPhone.trim() || null,
+        ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+        ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
         discountAmount: discountValue,
         amountPaid: amountPaidValue,
         isPartPayment,
@@ -672,18 +671,6 @@ function SellPageContent() {
                 >
                   <CardContent className="p-3">
                     <div className="flex items-center gap-3">
-                      <div className="size-14 rounded-lg bg-muted flex items-center justify-center overflow-hidden shrink-0">
-                        {product.image_url ? (
-                          <img
-                            src={product.image_url}
-                            alt={product.name}
-                            className="size-full object-cover"
-                          />
-                        ) : (
-                          <Package className="size-6 text-muted-foreground" />
-                        )}
-                      </div>
-
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold truncate text-base">
                           {product.name}

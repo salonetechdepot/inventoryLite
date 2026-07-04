@@ -1,6 +1,7 @@
 import { Package } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { AuthOtpFlow } from "@/components/auth-otp-flow"
+import { SessionExpiredNotice } from "@/components/session-expired-notice"
 
 export default function LoginPage() {
   return (
@@ -12,10 +13,11 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-2xl font-bold">Welcome Back!</CardTitle>
           <CardDescription className="text-base">
-            Sign in with a one-time code via WhatsApp or email
+            Sign in with your Roarbyte account (SMS or email OTP)
           </CardDescription>
         </CardHeader>
         <CardContent>
+          <SessionExpiredNotice />
           <AuthOtpFlow mode="login" />
         </CardContent>
       </Card>

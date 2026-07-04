@@ -6,8 +6,7 @@ Inventory and point-of-sale for small businesses in Sierra Leone. Works online a
 
 - Node.js 20+
 - PostgreSQL database
-- (Optional) Meta WhatsApp Cloud API for phone OTP
-- (Optional) Resend for email OTP
+- Roarbyte auth API (`API_URL` / `NEXT_PUBLIC_API_URL`) for login OTP
 
 ## Local setup
 
@@ -59,22 +58,14 @@ Ensure `DATABASE_URL` is available to the migration step. Do not apply migration
 | `JWT_SECRET` | Session signing (long random string) |
 | `APP_NAME` | Shown in emails and legal pages |
 
-### WhatsApp OTP (optional)
+### Roarbyte login API
 
 | Variable | Purpose |
 |----------|---------|
-| `WHATSAPP_PHONE_NUMBER_ID` | Meta WhatsApp phone number ID |
-| `WHATSAPP_ACCESS_TOKEN` | Permanent system user token (production) |
-| `WHATSAPP_OTP_TEMPLATE_NAME` | Approved template name |
-| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language (e.g. `en`) |
-| `WHATSAPP_OTP_URL_BUTTON_INDEX` | `0` if template has a dynamic URL button |
+| `API_URL` | Full Login URL, e.g. `https://host/api/Login` |
+| `NEXT_PUBLIC_API_URL` | Same URL for the browser (axios + zustand) |
 
-### Email OTP (optional)
-
-| Variable | Purpose |
-|----------|---------|
-| `RESEND_API_KEY` | Resend API key |
-| `RESEND_FROM_EMAIL` | Verified sender address |
+Login requires **SuperAdmin** role, an **active subscription**, and module id `22222222-2222-2222-2222-222222222203` (Lite Inventory System). Inventory rows are scoped by `tenant_id` from the login token.
 
 ### Operator console (developer only)
 

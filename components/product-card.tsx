@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Minus, Plus, Edit, Package } from "lucide-react"
+import { Minus, Plus, Edit } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,7 +18,6 @@ interface Product {
   low_stock_threshold: number
   category_name: string | null
   category_icon: string | null
-  image_url: string | null
   has_specifications: boolean
   tags: string[]
 }
@@ -97,39 +96,14 @@ export function ProductCard({
       isLowStock && "border-warning/50 bg-warning/5"
     )}>
       <CardContent className="p-4">
-        <div className="flex items-start gap-4">
-          {/* Product Image */}
-          <div className="size-16 rounded-lg bg-muted flex items-center justify-center overflow-hidden shrink-0">
-            {product.image_url ? (
-              <img 
-                src={product.image_url} 
-                alt={product.name}
-                className="size-full object-cover"
-                crossOrigin="anonymous"
-              />
-            ) : (
-              <Package className="size-8 text-muted-foreground" />
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-lg leading-tight truncate">{product.name}</h3>
+            {product.category_name && (
+              <p className="text-sm text-muted-foreground">{product.category_name}</p>
             )}
-          </div>
-          
-          {/* Product Info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h3 className="font-semibold text-lg leading-tight truncate">{product.name}</h3>
-                {product.category_name && (
-                  <p className="text-sm text-muted-foreground">{product.category_name}</p>
-                )}
-              </div>
-              <Link href={`/dashboard/products/${product.id}/edit`}>
-                <Button variant="ghost" size="icon" className="size-9 shrink-0">
-                  <Edit className="size-4" />
-                </Button>
-              </Link>
-            </div>
-            
             <div className="flex items-center gap-2 mt-2">
-              <Badge 
+              <Badge
                 variant={isOutOfStock ? "destructive" : isLowStock ? "secondary" : "default"}
                 className={cn(
                   "text-sm font-medium",
@@ -153,6 +127,11 @@ export function ProductCard({
               ))}
             </div>
           </div>
+          <Link href={`/dashboard/products/${product.id}/edit`}>
+            <Button variant="ghost" size="icon" className="size-9 shrink-0">
+              <Edit className="size-4" />
+            </Button>
+          </Link>
         </div>
 
         {/* Quick Adjust Buttons */}

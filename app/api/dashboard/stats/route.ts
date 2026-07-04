@@ -15,7 +15,7 @@ export async function GET() {
       lowStockProductsRaw
     ] = await Promise.all([
       prisma.product.findMany({
-        where: { userId: session.userId },
+        where: { tenantId: session.tenantId },
         select: {
           id: true,
           name: true,
@@ -26,7 +26,7 @@ export async function GET() {
       }),
       prisma.sale.findMany({
         where: {
-          userId: session.userId,
+          tenantId: session.tenantId,
           type: 'SALE',
           createdAt: {
             gte: new Date(new Date().setHours(0, 0, 0, 0)),
@@ -38,7 +38,7 @@ export async function GET() {
         }
       }),
       prisma.product.findMany({
-        where: { userId: session.userId },
+        where: { tenantId: session.tenantId },
         orderBy: { quantity: 'asc' },
         select: {
           id: true,

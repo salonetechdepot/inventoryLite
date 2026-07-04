@@ -1,31 +1,96 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertTriangle, CloudOff, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
-import { getConflictCount, getQueuedMutationCount, processOfflineQueue } from "@/lib/offline-sync"
+import {
+  getConflictCount,
+  getQueuedMutationCount,
+  processOfflineQueue,
+} from "@/lib/offline-sync"
+
+async function refreshCounts(
+  setQueueCount: (n: number) => void,
+  setConflictCount: (n: number) => void
+) {
+  setQueueCount(await getQueuedMutationCount())
+  setConflictCount(await getConflictCount())
+}
 
 export function OfflineSync() {
   const [isOnline, setIsOnline] = useState(true)
   const [queueCount, setQueueCount] = useState(0)
   const [conflictCount, setConflictCount] = useState(0)
   const [isSyncing, setIsSyncing] = useState(false)
+  const syncingRef = useRef(false)
+
+  const runSync = useCallback(async (reason: "online" | "mount" | "manual") => {
+    if (syncingRef.current) return
+    if (!navigator.onLine) return
+
+    const pending = await getQueuedMutationCount()
+    setQueueCount(pending)
+    if (pending === 0) return
+
+    syncingRef.current = true
+    setIsSyncing(true)
+
+    // Brief delay after reconnect so the network stack is ready.
+    if (reason === "online") {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+
+    try {
+      const result = await processOfflineQueue()
+      await refreshCounts(setQueueCount, setConflictCount)
+
+      if (result.synced > 0) {
+        toast({
+          title: "Sync complete",
+          description: `${result.synced} queued change(s) synced.`,
+        })
+        // Reload data-heavy views that use IndexedDB cache.
+        window.location.reload()
+        return
+      }
+
+      if (result.conflicts > 0) {
+        toast({
+          title: "Sync conflicts",
+          description: result.lastError || `${result.conflicts} change(s) need review.`,
+          variant: "destructive",
+        })
+        return
+      }
+
+      if (result.failed > 0) {
+        toast({
+          title: "Sync incomplete",
+          description: result.lastError || `${result.failed} change(s) still pending.`,
+        })
+      }
+    } finally {
+      syncingRef.current = false
+      setIsSyncing(false)
+    }
+  }, [])
 
   useEffect(() => {
-    const loadCounts = async () => {
+    const init = async () => {
       setIsOnline(navigator.onLine)
-      setQueueCount(await getQueuedMutationCount())
-      setConflictCount(await getConflictCount())
+      await refreshCounts(setQueueCount, setConflictCount)
+      if (navigator.onLine) {
+        void runSync("mount")
+      }
     }
-    void loadCounts()
-  }, [])
+    void init()
+  }, [runSync])
 
   useEffect(() => {
     const updateOfflineState = async () => {
       setIsOnline(false)
-      setQueueCount(await getQueuedMutationCount())
-      setConflictCount(await getConflictCount())
+      await refreshCounts(setQueueCount, setConflictCount)
       toast({
         title: "Offline mode",
         description: "Changes will be saved locally and synced later.",
@@ -34,38 +99,8 @@ export function OfflineSync() {
 
     const syncWhenOnline = async () => {
       setIsOnline(true)
-      const queuedBeforeSync = await getQueuedMutationCount()
-      setQueueCount(queuedBeforeSync)
-      setConflictCount(await getConflictCount())
-
-      if (queuedBeforeSync === 0) return
-
-      setIsSyncing(true)
-      const result = await processOfflineQueue()
-      setIsSyncing(false)
-      setQueueCount(await getQueuedMutationCount())
-      setConflictCount(await getConflictCount())
-
-      if (result.synced > 0) {
-        toast({
-          title: "Sync complete",
-          description: `${result.synced} queued change(s) synced.`,
-        })
-      }
-
-      if (result.failed > 0) {
-        toast({
-          title: "Sync incomplete",
-          description: `${result.failed} change(s) still pending.`,
-        })
-      }
-
-      if (result.conflicts > 0) {
-        toast({
-          title: "Sync conflicts detected",
-          description: `${result.conflicts} change(s) require manual review.`,
-        })
-      }
+      await refreshCounts(setQueueCount, setConflictCount)
+      void runSync("online")
     }
 
     window.addEventListener("offline", updateOfflineState)
@@ -75,13 +110,31 @@ export function OfflineSync() {
       window.removeEventListener("offline", updateOfflineState)
       window.removeEventListener("online", syncWhenOnline)
     }
-  }, [])
+  }, [runSync])
 
   if (isOnline && queueCount === 0 && conflictCount === 0 && !isSyncing) return null
 
+  const badgeLabel = !isOnline
+    ? "Offline"
+    : isSyncing
+      ? "Syncing…"
+      : queueCount > 0
+        ? `${queueCount} pending — tap to sync`
+        : `${conflictCount} conflict${conflictCount === 1 ? "" : "s"}`
+
   return (
-    <div className="fixed left-1/2 top-3 z-50 -translate-x-1/2">
-      <Badge variant="secondary" className="px-3 py-1 text-xs shadow">
+    <button
+      type="button"
+      className="fixed left-1/2 top-3 z-50 -translate-x-1/2"
+      onClick={() => {
+        if (isOnline && !isSyncing && queueCount > 0) {
+          void runSync("manual")
+        }
+      }}
+      disabled={!isOnline || isSyncing || queueCount === 0}
+      aria-label={badgeLabel}
+    >
+      <Badge variant="secondary" className="px-3 py-1 text-xs shadow cursor-pointer">
         {!isOnline && (
           <>
             <CloudOff className="mr-1 size-3" />
@@ -91,18 +144,17 @@ export function OfflineSync() {
         {isOnline && isSyncing && (
           <>
             <RefreshCw className="mr-1 size-3 animate-spin" />
-            Syncing...
+            Syncing…
           </>
         )}
-        {isOnline && !isSyncing && queueCount > 0 && `${queueCount} pending sync`}
-        {isOnline && !isSyncing && conflictCount > 0 && (
+        {isOnline && !isSyncing && queueCount > 0 && badgeLabel}
+        {isOnline && !isSyncing && queueCount === 0 && conflictCount > 0 && (
           <>
-            {queueCount > 0 ? " - " : ""}
-            <AlertTriangle className="mx-1 inline size-3" />
+            <AlertTriangle className="mr-1 size-3" />
             {conflictCount} conflict{conflictCount === 1 ? "" : "s"}
           </>
         )}
       </Badge>
-    </div>
+    </button>
   )
 }

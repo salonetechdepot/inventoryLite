@@ -35,6 +35,17 @@ export function detectInstallPlatform(): InstallPlatform {
   return 'unknown'
 }
 
-export function isProductionClient(): boolean {
-  return process.env.NODE_ENV === 'production'
+/** Show install UI in production and on localhost (dev testing). */
+export function canShowInstallPrompt(): boolean {
+  if (typeof window === 'undefined') return false
+  if (process.env.NODE_ENV === 'production') return true
+  return (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  )
+}
+
+export function isIosSafari(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
 }

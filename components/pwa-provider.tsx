@@ -2,13 +2,18 @@
 
 import { useEffect } from "react"
 
+function isLocalhost() {
+  return (
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  )
+}
+
 export function PwaProvider() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return
 
-    // In development the SW's stale-while-revalidate cache serves outdated JS
-    // chunks, which breaks hydration. Unregister any existing SW and skip it.
-    if (process.env.NODE_ENV !== "production") {
+    // Skip SW in dev on non-localhost (avoids stale chunk cache on LAN IPs).
+    if (process.env.NODE_ENV !== "production" && !isLocalhost()) {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((registration) => void registration.unregister())
       })
@@ -24,7 +29,6 @@ export function PwaProvider() {
           if (!worker) return
           worker.addEventListener("statechange", () => {
             if (worker.state === "activated" && navigator.serviceWorker.controller) {
-              // New SW (e.g. offline fix) — reload once to use fresh caches.
               window.location.reload()
             }
           })

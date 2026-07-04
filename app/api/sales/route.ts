@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
     const sales = await prisma.sale.findMany({
       where: {
-        userId: session.userId,
+        tenantId: session.tenantId,
         ...(typeFilter === 'sale' ? { type: 'SALE' } : {}),
         ...(typeFilter === 'return' ? { type: 'RETURN' } : {})
       },
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
 
     // Get product details
     const product = await prisma.product.findFirst({
-      where: { id: productId, userId: session.userId },
+      where: { id: productId, tenantId: session.tenantId },
       select: { id: true, name: true, quantity: true, unitPrice: true }
     })
 
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     const [saleResult] = await prisma.$transaction([
       prisma.sale.create({
         data: {
-          userId: session.userId,
+          tenantId: session.tenantId,
           productId,
           type: 'SALE',
           productName,

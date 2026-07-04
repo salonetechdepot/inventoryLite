@@ -40,14 +40,17 @@ const saleItemSchema = z.object({
 const batchSaleSchema = z.object({
   items: z.array(saleItemSchema).min(1).max(100),
   type: z.enum(['sale', 'return']).optional().default('sale'),
-  customerName: z.string().trim().max(255).optional(),
-  customerPhone: z.string().trim().max(50).optional(),
+  customerName: z.string().trim().max(255).nullish(),
+  customerPhone: z.string().trim().max(50).nullish(),
   discountAmount: moneySchema.optional().default(0),
   amountPaid: moneySchema.optional().default(0),
   isPartPayment: z.boolean().optional().default(false),
-  paymentMethod: trimmedString(50).optional().default('cash'),
-  notes: z.string().trim().max(500).optional(),
-  originalReceiptId: uuidSchema.optional(),
+  paymentMethod: trimmedString(50).nullish().default('cash'),
+  notes: z.string().trim().max(500).nullish(),
+  originalReceiptId: uuidSchema.nullish(),
+  // Client-only fields used while offline — ignore if present
+  _offlineReceiptId: z.string().optional(),
+  _offlineTempId: z.string().optional(),
 })
 
 class InsufficientStockError extends Error {
@@ -68,8 +71,8 @@ export async function POST(request: Request) {
     if (idempotencyKey) {
       const existing = await prisma.idempotencyKey.findUnique({
         where: {
-          userId_route_key: {
-            userId: session.userId,
+          tenantId_route_key: {
+            tenantId: session.tenantId,
             route: 'sales.batch',
             key: idempotencyKey,
           },
@@ -121,7 +124,7 @@ export async function POST(request: Request) {
 
     const productIds = items.map((item) => item.productId)
     const products = await prisma.product.findMany({
-      where: { id: { in: productIds }, userId: session.userId },
+      where: { id: { in: productIds }, tenantId: session.tenantId },
       select: {
         id: true,
         name: true,
@@ -148,7 +151,7 @@ export async function POST(request: Request) {
 
     if (linkedOriginalId) {
       const validation = await validateReturnAgainstOriginalReceipt(
-        session.userId,
+        session.tenantId,
         linkedOriginalId,
         items
       )
@@ -173,7 +176,7 @@ export async function POST(request: Request) {
     const response = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
         data: {
-          userId: session.userId,
+          tenantId: session.tenantId,
           type: isReturn ? 'RETURN' : 'SALE',
           customerName: customerName?.trim() || null,
           customerPhone: customerPhone?.trim() || null,
@@ -205,7 +208,7 @@ export async function POST(request: Request) {
 
         const sale = await tx.sale.create({
           data: {
-            userId: session.userId,
+            tenantId: session.tenantId,
             productId: item.productId,
             receiptId: receipt.id,
             type: isReturn ? 'RETURN' : 'SALE',
@@ -229,7 +232,7 @@ export async function POST(request: Request) {
         if (isReturn) {
           if (restockQty > 0) {
             await tx.product.updateMany({
-              where: { id: item.productId, userId: session.userId },
+              where: { id: item.productId, tenantId: session.tenantId },
               data: { quantity: { increment: restockQty }, updatedAt: new Date() },
             })
           }
@@ -237,7 +240,7 @@ export async function POST(request: Request) {
           const stockUpdate = await tx.product.updateMany({
             where: {
               id: item.productId,
-              userId: session.userId,
+              tenantId: session.tenantId,
               quantity: { gte: item.quantity },
             },
             data: { quantity: { decrement: item.quantity }, updatedAt: new Date() },
@@ -251,7 +254,7 @@ export async function POST(request: Request) {
       if (safeAmountPaid > 0) {
         await tx.payment.create({
           data: {
-            userId: session.userId,
+            tenantId: session.tenantId,
             receiptId: receipt.id,
             amount: safeAmountPaid,
             method: paymentMethod?.trim() || 'cash',
@@ -298,7 +301,7 @@ export async function POST(request: Request) {
       if (idempotencyKey) {
         await tx.idempotencyKey.create({
           data: {
-            userId: session.userId,
+            tenantId: session.tenantId,
             route: 'sales.batch',
             key: idempotencyKey,
             responseJson: responseJson as Prisma.InputJsonValue,

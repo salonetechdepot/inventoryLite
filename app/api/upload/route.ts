@@ -9,8 +9,10 @@ const VALID_IMAGE_TYPES = new Map([
   ['image/gif', 'gif'],
 ])
 
-function userOwnsPath(pathname: string, userId: string) {
-  return [`products/${userId}/`, `branding/${userId}/`].some((prefix) => pathname.startsWith(prefix))
+function userOwnsPath(pathname: string, tenantId: string) {
+  return [`products/${tenantId}/`, `branding/${tenantId}/`].some((prefix) =>
+    pathname.startsWith(prefix)
+  )
 }
 
 function pathnameFromUploadUrl(url: string): string | null {
@@ -54,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     // Create unique filename with user id prefix
     const safeFolder = folder === 'branding' ? 'branding' : 'products'
-    const filename = `${safeFolder}/${session.userId}/${Date.now()}-${crypto.randomUUID()}.${extension}`
+    const filename = `${safeFolder}/${session.tenantId}/${Date.now()}-${crypto.randomUUID()}.${extension}`
 
     const blob = await put(filename, file, {
       access: 'private',
@@ -83,7 +85,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     const pathname = pathnameFromUploadUrl(String(url))
-    if (!pathname || !userOwnsPath(pathname, session.userId)) {
+    if (!pathname || !userOwnsPath(pathname, session.tenantId)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

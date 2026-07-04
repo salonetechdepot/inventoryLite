@@ -11,7 +11,7 @@ export type ReturnableLine = {
 
 /** Quantities still eligible to return against a sale receipt. */
 export async function getReturnableLinesForReceipt(
-  userId: string,
+  tenantId: string,
   originalReceiptId: string
 ): Promise<
   | {
@@ -28,7 +28,7 @@ export async function getReturnableLinesForReceipt(
   | { ok: false; error: string; status: number }
 > {
   const original = await prisma.receipt.findFirst({
-    where: { id: originalReceiptId, userId, type: 'SALE' },
+    where: { id: originalReceiptId, tenantId, type: 'SALE' },
     include: {
       sales: {
         where: { type: 'SALE' },
@@ -64,7 +64,7 @@ export async function getReturnableLinesForReceipt(
 
   const returnReceipts = await prisma.receipt.findMany({
     where: {
-      userId,
+      tenantId,
       type: 'RETURN',
       originalReceiptId,
     },
@@ -116,11 +116,11 @@ export async function getReturnableLinesForReceipt(
 }
 
 export async function validateReturnAgainstOriginalReceipt(
-  userId: string,
+  tenantId: string,
   originalReceiptId: string,
   items: Array<{ productId: string; quantity: number }>
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
-  const result = await getReturnableLinesForReceipt(userId, originalReceiptId)
+  const result = await getReturnableLinesForReceipt(tenantId, originalReceiptId)
   if (!result.ok) return result
 
   const cap = new Map(result.lines.map((l) => [l.product_id, l.returnable_quantity]))

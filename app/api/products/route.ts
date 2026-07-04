@@ -36,7 +36,7 @@ export async function GET() {
     }
 
     const products = await prisma.product.findMany({
-      where: { userId: session.userId },
+      where: { tenantId: session.tenantId },
       orderBy: { name: 'asc' },
       include: {
         category: {
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
 
     if (categoryId) {
       const category = await prisma.category.findFirst({
-        where: { id: categoryId, userId: session.userId },
+        where: { id: categoryId, tenantId: session.tenantId },
         select: { id: true },
       })
       if (!category) {
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
 
     const product = await prisma.product.create({
       data: {
-        userId: session.userId,
+        tenantId: session.tenantId,
         categoryId: categoryId || null,
         name,
         scanCode: scanCode?.trim() || null,

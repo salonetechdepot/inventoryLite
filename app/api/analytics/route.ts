@@ -16,7 +16,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const userId = session.userId
+    const tenantId = session.tenantId
     const now = new Date()
     const startOfToday = new Date(now)
     startOfToday.setHours(0, 0, 0, 0)
@@ -26,7 +26,7 @@ export async function GET() {
 
     const [allLines, products] = await Promise.all([
       prisma.sale.findMany({
-        where: { userId },
+        where: { tenantId },
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -40,7 +40,7 @@ export async function GET() {
         },
       }),
       prisma.product.findMany({
-        where: { userId },
+        where: { tenantId },
         include: {
           category: { select: { name: true } },
         },

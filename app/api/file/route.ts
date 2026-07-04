@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify the pathname belongs to the current user (security check)
-    const userPathPrefixes = [`products/${session.userId}/`, `branding/${session.userId}/`]
+    const userPathPrefixes = [`products/${session.tenantId}/`, `branding/${session.tenantId}/`]
     if (!userPathPrefixes.some((prefix) => pathname.startsWith(prefix))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }

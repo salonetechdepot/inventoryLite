@@ -1,6 +1,7 @@
 "use client"
 
 import { restockQuantityForLine, type ReturnDisposition } from "@/lib/return-inventory"
+import { isSessionExpired, shouldClearStoredSession } from "@/lib/session-expiry"
 
 const DB_NAME = "stockeasy-offline-db"
 const DB_VERSION = 1
@@ -36,25 +37,48 @@ const EMPTY_DASHBOARD_STATS = {
   }>,
 }
 
-function persistSessionBackup(data: { user: unknown }) {
+export type SessionBackup = {
+  user: unknown
+  sessionExpiresAt: string | null
+}
+
+function persistSessionBackup(data: SessionBackup) {
   if (!isBrowser()) return
   try {
-    if (data?.user) {
+    if (data?.user && !shouldClearStoredSession(data.sessionExpiresAt)) {
       localStorage.setItem(SESSION_LOCAL_KEY, JSON.stringify(data))
+    } else {
+      localStorage.removeItem(SESSION_LOCAL_KEY)
     }
   } catch {
     // Ignore quota / private mode errors.
   }
 }
 
-function loadSessionBackup(): { user: unknown } | null {
+function loadSessionBackup(): SessionBackup | null {
   if (!isBrowser()) return null
   try {
     const raw = localStorage.getItem(SESSION_LOCAL_KEY)
-    return raw ? (JSON.parse(raw) as { user: unknown }) : null
+    if (!raw) return null
+    const data = JSON.parse(raw) as SessionBackup
+    if (!data?.user || shouldClearStoredSession(data.sessionExpiresAt)) {
+      localStorage.removeItem(SESSION_LOCAL_KEY)
+      return null
+    }
+    return data
   } catch {
     return null
   }
+}
+
+export async function clearSessionBackup() {
+  if (!isBrowser()) return
+  try {
+    localStorage.removeItem(SESSION_LOCAL_KEY)
+  } catch {
+    // ignore
+  }
+  await cacheData(SESSION_CACHE_KEY, { user: null, sessionExpiresAt: null })
 }
 
 function isOfflineGatewayResponse(response: Response) {
@@ -70,7 +94,7 @@ async function offlineFallbackForKey<T>(cacheKey: string): Promise<T | null> {
   if (cacheKey === SESSION_CACHE_KEY) {
     const backup = loadSessionBackup()
     if (backup) return backup as T
-    return { user: null } as T
+    return { user: null, sessionExpiresAt: null } as T
   }
   if (cacheKey === ANALYTICS_CACHE_KEY) {
     const { EMPTY_ANALYTICS } = await import("@/lib/analytics-types")
@@ -82,6 +106,24 @@ async function offlineFallbackForKey<T>(cacheKey: string): Promise<T | null> {
   if (cacheKey === CATEGORIES_CACHE_KEY) {
     return { categories: [] } as T
   }
+  if (cacheKey === PRODUCTS_CACHE_KEY) {
+    return { products: [] } as T
+  }
+  if (
+    cacheKey === RETURN_RECEIPTS_CACHE_KEY ||
+    cacheKey === SALE_RECEIPTS_CACHE_KEY ||
+    cacheKey.startsWith("/api/receipts")
+  ) {
+    return { receipts: [] } as T
+  }
+
+  const productMatch = cacheKey.match(/^\/api\/products\/([^/?]+)$/)
+  if (productMatch) {
+    const productsState = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
+    const product = productsState?.products?.find((p) => p.id === productMatch[1])
+    if (product) return { product } as T
+  }
+
   return null
 }
 
@@ -962,16 +1004,58 @@ function shouldTreatAsSuccess(mutation: QueuedMutation, status: number) {
   return mutation.method === "DELETE" && status === 404
 }
 
+/** Client/validation errors won't succeed on retry — surface immediately. */
+function isPermanentSyncFailure(status: number) {
+  return status === 400 || status === 401 || status === 403 || status === 404
+}
+
+function mutationFetchHeaders(mutation: QueuedMutation): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(mutation.headers ?? {}),
+  }
+}
+
+async function readApiError(response: Response): Promise<string> {
+  try {
+    const data = (await response.clone().json()) as { error?: string; message?: string }
+    return data.error || data.message || `Request failed (${response.status})`
+  } catch {
+    return `Request failed (${response.status})`
+  }
+}
+
+export const OFFLINE_SYNC_COMPLETE_EVENT = "stockeasy-offline-sync-complete"
+
+function notifySyncComplete(detail: { synced: number; failed: number; conflicts: number }) {
+  if (!isBrowser()) return
+  window.dispatchEvent(new CustomEvent(OFFLINE_SYNC_COMPLETE_EVENT, { detail }))
+}
+
+async function readFromOfflineCache<T>(cacheKey: string): Promise<T> {
+  const cached = await getCachedData<T>(cacheKey)
+  if (cached !== null) {
+    if (cacheKey === SESSION_CACHE_KEY) {
+      const sessionData = cached as SessionBackup
+      if (!sessionData.user || shouldClearStoredSession(sessionData.sessionExpiresAt)) {
+        await clearSessionBackup()
+        return { user: null, sessionExpiresAt: null } as T
+      }
+    }
+    return cached
+  }
+  const fallback = await offlineFallbackForKey<T>(cacheKey)
+  if (fallback !== null) return fallback
+  // Never throw for UI data — empty payloads keep pages from crashing offline.
+  return {} as T
+}
+
 export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true
   const cacheKey = url
 
   if (!isOnline) {
-    const cached = await getCachedData<T>(cacheKey)
-    if (cached !== null) return cached
-    const fallback = await offlineFallbackForKey<T>(cacheKey)
-    if (fallback !== null) return fallback
-    throw new Error("You are offline and there is no cached data available.")
+    return readFromOfflineCache<T>(cacheKey)
   }
 
   try {
@@ -982,7 +1066,12 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
     const data = (await res.json()) as T
 
     if (cacheKey === SESSION_CACHE_KEY) {
-      persistSessionBackup(data as { user: unknown })
+      const sessionData = data as SessionBackup
+      if (sessionData.user && shouldClearStoredSession(sessionData.sessionExpiresAt)) {
+        await clearSessionBackup()
+        return { user: null, sessionExpiresAt: null } as T
+      }
+      persistSessionBackup(sessionData)
     }
     if (cacheKey === PRODUCTS_CACHE_KEY) {
       const previous = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
@@ -1008,11 +1097,7 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
     await cacheData(cacheKey, data)
     return data
   } catch {
-    const cached = await getCachedData<T>(cacheKey)
-    if (cached !== null) return cached
-    const fallback = await offlineFallbackForKey<T>(cacheKey)
-    if (fallback !== null) return fallback
-    throw new Error("Failed to fetch data and no offline cache was found.")
+    return readFromOfflineCache<T>(cacheKey)
   }
 }
 
@@ -1034,7 +1119,11 @@ export async function sendOrQueueMutation(input: {
     const body = remapIdsInBody(input.body, {})
     const response = await fetch(input.url, {
       method: input.method,
-      headers: input.headers,
+      headers: {
+        "Content-Type": "application/json",
+        ...(input.headers ?? {}),
+      },
+      credentials: "same-origin",
       body: body ? JSON.stringify(body) : undefined,
     })
 
@@ -1094,13 +1183,21 @@ export async function sendOrQueueMutation(input: {
   }
 }
 
-export async function processOfflineQueue() {
+export type SyncQueueResult = {
+  synced: number
+  failed: number
+  conflicts: number
+  lastError?: string
+}
+
+export async function processOfflineQueue(): Promise<SyncQueueResult> {
   const queue = await getQueue()
   if (queue.length === 0) return { synced: 0, failed: 0, conflicts: 0 }
 
   let synced = 0
   let failed = 0
   let conflicts = 0
+  let lastError: string | undefined
   const tempIdMap: Record<string, string> = {}
 
   for (const mutation of queue) {
@@ -1110,7 +1207,8 @@ export async function processOfflineQueue() {
     try {
       const res = await fetch(mappedUrl, {
         method: mutation.method,
-        headers: mutation.headers,
+        headers: mutationFetchHeaders(mutation),
+        credentials: "same-origin",
         body: mappedBody ? JSON.stringify(mappedBody) : undefined,
       })
 
@@ -1121,21 +1219,20 @@ export async function processOfflineQueue() {
         const createdMap = await applyCreateSyncResolution(mutation, res)
         if (createdMap) Object.assign(tempIdMap, createdMap)
         synced += 1
-      } else if (isConflictStatus(res.status)) {
-        await markConflict(
-          mutation,
-          res.status,
-          `Server rejected ${mutation.method} ${mutation.url} with status ${res.status}.`
-        )
+      } else if (isConflictStatus(res.status) || isPermanentSyncFailure(res.status)) {
+        const reason = await readApiError(res)
+        lastError = reason
+        await markConflict(mutation, res.status, reason)
         await deleteFromStore(QUEUE_STORE, mutation.id)
         conflicts += 1
       } else {
         failed += 1
+        lastError = await readApiError(res)
         if (mutation.retryCount + 1 >= MAX_RETRY_COUNT) {
           await markConflict(
             mutation,
             res.status,
-            `Giving up after ${MAX_RETRY_COUNT} retries due to repeated server errors.`
+            lastError || `Giving up after ${MAX_RETRY_COUNT} retries.`
           )
           await deleteFromStore(QUEUE_STORE, mutation.id)
           conflicts += 1
@@ -1148,13 +1245,10 @@ export async function processOfflineQueue() {
       }
     } catch {
       failed += 1
+      lastError = "Network error while syncing. Try again."
 
       if (mutation.retryCount + 1 >= MAX_RETRY_COUNT) {
-        await markConflict(
-          mutation,
-          0,
-          `Request failed repeatedly, likely network or timeout issue.`
-        )
+        await markConflict(mutation, 0, lastError)
         await deleteFromStore(QUEUE_STORE, mutation.id)
         conflicts += 1
       } else {
@@ -1166,5 +1260,9 @@ export async function processOfflineQueue() {
     }
   }
 
-  return { synced, failed, conflicts }
+  const result = { synced, failed, conflicts, lastError }
+  if (synced > 0) {
+    notifySyncComplete(result)
+  }
+  return result
 }

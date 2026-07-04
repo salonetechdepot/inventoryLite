@@ -15,7 +15,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { themeColor, shopLogoUrl } = await request.json() as {
+    const { themeColor, shopLogoUrl } = (await request.json()) as {
       themeColor?: string | null
       shopLogoUrl?: string | null
     }
@@ -24,33 +24,32 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Invalid theme color format' }, { status: 400 })
     }
 
-    const user = await prisma.user.update({
-      where: { id: session.userId },
-      data: {
-        themeColor: themeColor === undefined ? undefined : (themeColor || null),
-        shopLogoUrl: shopLogoUrl === undefined ? undefined : (shopLogoUrl || null),
+    const settings = await prisma.tenantSettings.upsert({
+      where: { tenantId: session.tenantId },
+      create: {
+        tenantId: session.tenantId,
+        email: session.email,
+        businessName: session.businessName,
+        themeColor: themeColor === undefined ? null : themeColor || null,
+        shopLogoUrl: shopLogoUrl === undefined ? null : shopLogoUrl || null,
       },
-      select: {
-        id: true,
-        email: true,
-        phoneE164: true,
-        businessName: true,
-        themeColor: true,
-        shopLogoUrl: true,
-        createdAt: true,
-      }
+      update: {
+        themeColor: themeColor === undefined ? undefined : themeColor || null,
+        shopLogoUrl: shopLogoUrl === undefined ? undefined : shopLogoUrl || null,
+      },
     })
 
     return NextResponse.json({
       user: {
-        id: user.id,
-        email: user.email,
-        phone_e164: user.phoneE164,
-        business_name: user.businessName,
-        theme_color: user.themeColor,
-        shop_logo_url: user.shopLogoUrl,
-        created_at: user.createdAt
-      }
+        id: settings.tenantId,
+        tenant_id: settings.tenantId,
+        email: settings.email || session.email,
+        phone_e164: settings.phoneE164,
+        business_name: settings.businessName || session.businessName,
+        theme_color: settings.themeColor,
+        shop_logo_url: settings.shopLogoUrl,
+        created_at: settings.createdAt,
+      },
     })
   } catch (error) {
     console.error('Update account settings error:', error)

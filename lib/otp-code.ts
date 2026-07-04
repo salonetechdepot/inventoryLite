@@ -9,7 +9,7 @@ export function generateSixDigitCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0')
 }
 
-/** Stable key for OTP storage, e.g. `whatsapp:+232…` or `email:user@example.com` */
+/** Stable key for OTP storage, e.g. `sms:+232…` or `email:user@example.com` */
 export function hashOtpCode(otpKey: string, code: string): string {
   return createHmac('sha256', otpPepper()).update(`${otpKey}:${code}`).digest('hex')
 }

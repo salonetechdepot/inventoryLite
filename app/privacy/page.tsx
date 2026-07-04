@@ -79,9 +79,9 @@ export default function PrivacyPolicyPage() {
               <p>
                 <strong className="font-medium text-foreground">Account information.</strong>{' '}
                 When you register or sign in, we collect your business name, email address,
-                and/or mobile phone number (including WhatsApp-capable numbers in E.164
-                format). We use one-time verification codes sent via WhatsApp or email — we
-                do not ask you to create or use a password for day-to-day sign-in.
+                and/or mobile phone number (in E.164 format). We use one-time verification
+                codes sent via SMS or email — we do not ask you to create or use a password
+                for day-to-day sign-in.
               </p>
               <p>
                 <strong className="font-medium text-foreground">Business and inventory data.</strong>{' '}
@@ -157,8 +157,9 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-disc space-y-2 pl-5">
                 <li>
-                  <strong className="font-medium text-foreground">WhatsApp (Meta)</strong> —
-                  to deliver one-time sign-in and verification codes to your phone number
+                  <strong className="font-medium text-foreground">Twilio</strong> —
+                  to deliver one-time sign-in and verification codes by SMS to your phone
+                  number
                 </li>
                 <li>
                   <strong className="font-medium text-foreground">Resend</strong> — to send

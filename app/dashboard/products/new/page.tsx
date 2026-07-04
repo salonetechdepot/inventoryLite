@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { ImageUpload } from "@/components/image-upload"
 import { toast } from "@/hooks/use-toast"
 import { ProductSpecFields } from "@/components/product-spec-fields"
 import type { ProductSpecifications } from "@/lib/product-specifications"
@@ -46,7 +45,6 @@ export default function NewProductPage() {
   const [scanCode, setScanCode] = useState("")
   const [tagsInput, setTagsInput] = useState("")
   const [hasSpecifications, setHasSpecifications] = useState(false)
-  const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
@@ -75,7 +73,6 @@ export default function NewProductPage() {
         scanCode: scanCode.trim() || null,
         tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
         hasSpecifications,
-        imageUrl: imageUrl || null,
       }
 
       const { queued, response, conflict } = await sendOrQueueMutation({
@@ -143,12 +140,6 @@ export default function NewProductPage() {
                   {error}
                 </div>
               )}
-
-              <Field>
-                <FieldLabel className="text-base">Product Photo</FieldLabel>
-                <ImageUpload value={imageUrl} onChange={setImageUrl} />
-                <FieldDescription>Take a photo or upload an image</FieldDescription>
-              </Field>
 
               <Field>
                 <FieldLabel htmlFor="name" className="text-base">Product Name *</FieldLabel>

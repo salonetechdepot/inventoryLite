@@ -13,7 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
-import { ImageUpload } from "@/components/image-upload"
 import { ProductSpecFields } from "@/components/product-spec-fields"
 import type { ProductSpecifications } from "@/lib/product-specifications"
 import { toast } from "@/hooks/use-toast"
@@ -33,7 +32,6 @@ interface Product {
   cost_price: number | null
   low_stock_threshold: number
   category_id: string | null
-  image_url: string | null
   scan_code: string | null
   tags: string[]
   has_specifications: boolean
@@ -70,7 +68,6 @@ export default function EditProductPage() {
   const [scanCode, setScanCode] = useState("")
   const [tagsInput, setTagsInput] = useState("")
   const [hasSpecifications, setHasSpecifications] = useState(false)
-  const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -90,7 +87,6 @@ export default function EditProductPage() {
       setScanCode(p.scan_code || "")
       setTagsInput((p.tags || []).join(", "))
       setHasSpecifications(Boolean(p.has_specifications))
-      setImageUrl(p.image_url || undefined)
     }
   }, [productData])
 
@@ -117,7 +113,6 @@ export default function EditProductPage() {
         tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
         hasSpecifications,
         specifications: hasSpecifications ? specifications : null,
-        imageUrl: imageUrl || null,
       }
 
       const { queued, response, conflict } = await sendOrQueueMutation({
@@ -195,6 +190,23 @@ export default function EditProductPage() {
     )
   }
 
+  if (!productData?.product) {
+    return (
+      <main className="p-4">
+        <Link
+          href="/dashboard/products"
+          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-4"
+        >
+          <ArrowLeft className="size-5 mr-1" />
+          Back to Products
+        </Link>
+        <p className="text-muted-foreground">
+          Product not found in saved data. Open Products while online, then try again offline.
+        </p>
+      </main>
+    )
+  }
+
   return (
     <main className="p-4">
       {/* Header */}
@@ -247,12 +259,6 @@ export default function EditProductPage() {
                   {error}
                 </div>
               )}
-
-              <Field>
-                <FieldLabel className="text-base">Product Photo</FieldLabel>
-                <ImageUpload value={imageUrl} onChange={setImageUrl} />
-                <FieldDescription>Take a photo or upload an image</FieldDescription>
-              </Field>
 
               <Field>
                 <FieldLabel htmlFor="name" className="text-base">Product Name *</FieldLabel>
