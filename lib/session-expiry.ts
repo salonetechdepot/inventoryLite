@@ -115,7 +115,7 @@ export function sessionExpiresAtIso(expiresAt: Date): string {
 
 export function hasSessionExpiry(
   expiresAt: string | number | Date | null | undefined
-): boolean {
+): expiresAt is string | number | Date {
   if (expiresAt == null || expiresAt === '') return false
   if (expiresAt instanceof Date) return Number.isFinite(expiresAt.getTime())
   if (typeof expiresAt === 'number') return Number.isFinite(expiresAt)
