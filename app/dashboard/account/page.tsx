@@ -126,9 +126,7 @@ export default function AccountPage() {
                 <p className="text-sm text-muted-foreground">{user.phone_e164}</p>
               ) : null}
               <p className="text-sm text-muted-foreground">{user?.email}</p>
-              <p className="text-xs text-muted-foreground/80 mt-1">
-                Tenant: {user?.id}
-              </p>
+              
             </div>
           </div>
         </CardContent>
