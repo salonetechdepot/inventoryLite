@@ -2,12 +2,25 @@
 
 import useSWR from "swr"
 import Link from "next/link"
-import { ArrowLeft, BarChart3, TrendingUp, Package, WifiOff } from "lucide-react"
+import {
+  ArrowLeft,
+  BarChart3,
+  TrendingUp,
+  Package,
+  WifiOff,
+  Download,
+  Printer,
+} from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ANALYTICS_CACHE_KEY, fetchWithOfflineCache } from "@/lib/offline-sync"
 import type { AnalyticsPayload } from "@/lib/analytics-types"
+import { useAuth } from "@/hooks/use-auth"
+import { paymentMethodLabel } from "@/lib/payment-methods"
+import { downloadAnalyticsCsv, printAnalyticsReport } from "@/lib/report-export"
+import { toast } from "@/hooks/use-toast"
 
 const fetcher = fetchWithOfflineCache
 
@@ -45,6 +58,7 @@ function SummaryTile({
 }
 
 export default function AnalyticsPage() {
+  const { user } = useAuth()
   const { data, error, isLoading } = useSWR<AnalyticsPayload & { _offline?: boolean }>(
     ANALYTICS_CACHE_KEY,
     fetcher
@@ -53,6 +67,7 @@ export default function AnalyticsPage() {
   const isOffline =
     typeof navigator !== "undefined" && !navigator.onLine && Boolean(data)
   const showOfflineEmpty = data?._offline && !data.revenue.allTime.transactions
+  const canExport = Boolean(data) && !showOfflineEmpty
 
   return (
     <main className="pb-24 p-4 space-y-4">
@@ -81,6 +96,38 @@ export default function AnalyticsPage() {
             </Badge>
           )}
         </div>
+
+        {canExport && data && (
+          <div className="flex gap-2 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 h-11"
+              onClick={() => downloadAnalyticsCsv(data, user?.business_name)}
+            >
+              <Download className="mr-2 size-4" />
+              Export CSV
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 h-11"
+              onClick={() => {
+                const ok = printAnalyticsReport(data, user?.business_name)
+                if (!ok) {
+                  toast({
+                    title: "Print failed",
+                    description: "Could not open the print dialog. Try Export CSV instead.",
+                    variant: "destructive",
+                  })
+                }
+              }}
+            >
+              <Printer className="mr-2 size-4" />
+              Print
+            </Button>
+          </div>
+        )}
       </header>
 
       {isLoading && !data ? (
@@ -128,6 +175,30 @@ export default function AnalyticsPage() {
               sub={`Profit NLe ${formatMoney(data.profit.allTime)}`}
             />
           </div>
+
+          {data.paymentsByMethod && data.paymentsByMethod.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Payments this month</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <ul className="divide-y">
+                  {data.paymentsByMethod.map((p) => (
+                    <li
+                      key={p.method}
+                      className="flex justify-between gap-2 px-4 py-2 text-sm"
+                    >
+                      <span className="font-medium">{paymentMethodLabel(p.method)}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        NLe {formatMoney(p.amount)} · {p.count} payment
+                        {p.count === 1 ? "" : "s"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="pb-2">

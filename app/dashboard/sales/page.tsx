@@ -21,6 +21,13 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -36,6 +43,7 @@ import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
+import { PAYMENT_METHODS } from "@/lib/payment-methods"
 
 const fetcher = fetchWithOfflineCache
 
@@ -557,13 +565,18 @@ function ReceiptDetailsDialog({
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       className="h-10"
                     />
-                    <Input
-                      type="text"
-                      placeholder="Method (cash, momo)"
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="h-10"
-                    />
+                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="Payment method" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_METHODS.filter((m) => m.id !== "credit").map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <Input
                     type="text"

@@ -10,6 +10,7 @@ import {
   BarChart3,
   ChevronRight,
   Paintbrush,
+  AlertTriangle,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,6 +20,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { ImageUpload } from "@/components/image-upload"
 import { useAuth } from "@/hooks/use-auth"
+import { getConflictCount } from "@/lib/offline-sync"
 
 export default function AccountPage() {
   const router = useRouter()
@@ -30,6 +32,11 @@ export default function AccountPage() {
   )
   const [saving, setSaving] = useState(false)
   const [settingsError, setSettingsError] = useState("")
+  const [conflictCount, setConflictCount] = useState(0)
+
+  useEffect(() => {
+    void getConflictCount().then(setConflictCount)
+  }, [])
 
   useEffect(() => {
     const sync = () => setIsOffline(!navigator.onLine)
@@ -144,6 +151,29 @@ export default function AccountPage() {
             comingSoon
           />
           <Separator />
+          {conflictCount > 0 && (
+            <>
+              <Link
+                href="/dashboard/sync-conflicts"
+                className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"
+              >
+                <div className="size-10 rounded-lg bg-warning/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="size-5 text-warning" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium">Sync conflicts</h3>
+                    <Badge variant="secondary">{conflictCount}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Offline changes need review
+                  </p>
+                </div>
+                <ChevronRight className="size-5 text-muted-foreground shrink-0" />
+              </Link>
+              <Separator />
+            </>
+          )}
           <Link
             href="/dashboard/analytics"
             className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"

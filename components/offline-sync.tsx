@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { AlertTriangle, CloudOff, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
@@ -19,6 +20,7 @@ async function refreshCounts(
 }
 
 export function OfflineSync() {
+  const router = useRouter()
   const [isOnline, setIsOnline] = useState(true)
   const [queueCount, setQueueCount] = useState(0)
   const [conflictCount, setConflictCount] = useState(0)
@@ -85,6 +87,17 @@ export function OfflineSync() {
       }
     }
     void init()
+
+    const onVisible = () => {
+      void refreshCounts(setQueueCount, setConflictCount)
+    }
+    window.addEventListener("focus", onVisible)
+    document.addEventListener("visibilitychange", onVisible)
+
+    return () => {
+      window.removeEventListener("focus", onVisible)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
   }, [runSync])
 
   useEffect(() => {
@@ -120,18 +133,24 @@ export function OfflineSync() {
       ? "Syncing…"
       : queueCount > 0
         ? `${queueCount} pending — tap to sync`
-        : `${conflictCount} conflict${conflictCount === 1 ? "" : "s"}`
+        : `${conflictCount} conflict${conflictCount === 1 ? "" : "s"} — tap to review`
+
+  const handleBadgeClick = () => {
+    if (isOnline && !isSyncing && queueCount > 0) {
+      void runSync("manual")
+      return
+    }
+    if (isOnline && !isSyncing && conflictCount > 0) {
+      router.push("/dashboard/sync-conflicts")
+    }
+  }
 
   return (
     <button
       type="button"
       className="fixed left-1/2 top-3 z-50 -translate-x-1/2"
-      onClick={() => {
-        if (isOnline && !isSyncing && queueCount > 0) {
-          void runSync("manual")
-        }
-      }}
-      disabled={!isOnline || isSyncing || queueCount === 0}
+      onClick={handleBadgeClick}
+      disabled={!isOnline || isSyncing || (queueCount === 0 && conflictCount === 0)}
       aria-label={badgeLabel}
     >
       <Badge variant="secondary" className="px-3 py-1 text-xs shadow cursor-pointer">

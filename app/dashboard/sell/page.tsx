@@ -63,6 +63,11 @@ import {
   type ProductSpecifications,
 } from "@/lib/product-specifications"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
+import {
+  PAYMENT_METHODS,
+  type PaymentMethodId,
+  initialPaymentMethodForCheckout,
+} from "@/lib/payment-methods"
 
 const fetcher = fetchWithOfflineCache
 
@@ -154,6 +159,7 @@ function SellPageContent() {
   const [discountAmount, setDiscountAmount] = useState("0")
   const [amountPaid, setAmountPaid] = useState("0")
   const [isPartPayment, setIsPartPayment] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>("cash")
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, mutate } = useSWR<{ products: Product[] }>(
@@ -329,6 +335,7 @@ function SellPageContent() {
     setDiscountAmount("0")
     setAmountPaid("0")
     setIsPartPayment(false)
+    setPaymentMethod("cash")
     setCustomerName("")
     setCustomerPhone("")
   }
@@ -351,6 +358,15 @@ function SellPageContent() {
     setLoading(true)
     setError("")
 
+    const resolvedPaymentMethod =
+      transactionType === "return"
+        ? "cash"
+        : amountPaidValue > 0
+          ? paymentMethod
+          : isPartPayment
+            ? "credit"
+            : paymentMethod
+
     try {
       const payload = {
         items: cart.map((item) => ({
@@ -367,6 +383,7 @@ function SellPageContent() {
         discountAmount: discountValue,
         amountPaid: amountPaidValue,
         isPartPayment,
+        paymentMethod: resolvedPaymentMethod,
         ...(originalReceiptId && transactionType === "return"
           ? { originalReceiptId }
           : {}),
@@ -422,7 +439,7 @@ function SellPageContent() {
                       {
                         id: "initial",
                         amount: amountPaidValue,
-                        method: "cash",
+                        method: resolvedPaymentMethod,
                         note: "initial payment",
                         created_at: new Date().toISOString(),
                       },
@@ -466,7 +483,7 @@ function SellPageContent() {
                   {
                     id: "initial",
                     amount: amountPaidValue,
-                    method: "cash",
+                    method: resolvedPaymentMethod,
                     note: "initial payment",
                     created_at: new Date().toISOString(),
                   },
@@ -939,11 +956,48 @@ function SellPageContent() {
               <Button
                 type="button"
                 variant={isPartPayment ? "default" : "outline"}
-                onClick={() => setIsPartPayment((prev) => !prev)}
+                onClick={() => {
+                  setIsPartPayment((prev) => {
+                    const next = !prev
+                    setPaymentMethod(
+                      initialPaymentMethodForCheckout(next, amountPaidValue)
+                    )
+                    return next
+                  })
+                }}
                 className="w-full h-11"
               >
                 {isPartPayment ? "✓ Part payment enabled" : "Enable part payment"}
               </Button>
+
+              {transactionType === "sale" && amountPaidValue > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Payment method</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PAYMENT_METHODS.filter((m) => m.id !== "credit").map((method) => (
+                      <button
+                        key={method.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(method.id)}
+                        className={cn(
+                          "h-11 rounded-lg border text-sm font-medium transition-colors",
+                          paymentMethod === method.id
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-background hover:bg-muted/50"
+                        )}
+                      >
+                        {method.shortLabel}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {transactionType === "sale" && isPartPayment && amountPaidValue <= 0 && (
+                <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
+                  No payment collected — balance will be recorded as credit owed.
+                </div>
+              )}
 
               {/* Summary */}
               <div className="rounded-lg border divide-y">

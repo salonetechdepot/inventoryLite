@@ -42,6 +42,11 @@ export type AnalyticsPayload = {
     type: string
     date: string | Date | null
   }>
+  paymentsByMethod?: Array<{
+    method: string
+    amount: number
+    count: number
+  }>
   _cachedAt?: string
 }
 

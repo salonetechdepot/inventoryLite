@@ -523,7 +523,10 @@ async function buildOptimisticBatchReceiptAsync(
           {
             id: `${receiptId}-pay`,
             amount: safeAmountPaid,
-            method: "cash",
+            method:
+              typeof payload.paymentMethod === "string"
+                ? payload.paymentMethod.trim() || "cash"
+                : "cash",
             note: "initial payment",
             created_at: createdAt,
           },
@@ -971,6 +974,11 @@ export async function listConflicts() {
 export async function clearConflicts() {
   if (!isBrowser()) return
   await clearStore(CONFLICT_STORE)
+}
+
+export async function dismissConflict(id: string) {
+  if (!isBrowser()) return
+  await deleteFromStore(CONFLICT_STORE, id)
 }
 
 async function enqueueMutation(mutation: Omit<QueuedMutation, "id" | "createdAt" | "retryCount">) {

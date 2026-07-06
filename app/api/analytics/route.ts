@@ -24,7 +24,7 @@ export async function GET() {
     startOfWeek.setDate(now.getDate() - 7)
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
-    const [allLines, products] = await Promise.all([
+    const [allLines, products, monthPayments] = await Promise.all([
       prisma.sale.findMany({
         where: { tenantId },
         orderBy: { createdAt: 'desc' },
@@ -44,6 +44,13 @@ export async function GET() {
         include: {
           category: { select: { name: true } },
         },
+      }),
+      prisma.payment.findMany({
+        where: {
+          tenantId,
+          createdAt: { gte: startOfMonth },
+        },
+        select: { method: true, amount: true },
       }),
     ])
 
@@ -142,6 +149,16 @@ export async function GET() {
     }
     const categoryStats = [...categoryMap.values()].sort((a, b) => b.totalValue - a.totalValue)
 
+    const paymentMethodMap = new Map<string, { method: string; amount: number; count: number }>()
+    for (const payment of monthPayments) {
+      const method = (payment.method ?? 'cash').trim() || 'cash'
+      const existing = paymentMethodMap.get(method) ?? { method, amount: 0, count: 0 }
+      existing.amount += Number(payment.amount)
+      existing.count += 1
+      paymentMethodMap.set(method, existing)
+    }
+    const paymentsByMethod = [...paymentMethodMap.values()].sort((a, b) => b.amount - a.amount)
+
     const recentSales = allLines.slice(0, 20)
 
     const payload: AnalyticsPayload = {
@@ -187,6 +204,7 @@ export async function GET() {
         type: s.type,
         date: s.createdAt,
       })),
+      paymentsByMethod,
       _cachedAt: new Date().toISOString(),
     }
 
