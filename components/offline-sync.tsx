@@ -9,6 +9,7 @@ import {
   getConflictCount,
   getQueuedMutationCount,
   processOfflineQueue,
+  refreshAllOfflineData,
 } from "@/lib/offline-sync"
 
 async function refreshCounts(
@@ -52,8 +53,7 @@ export function OfflineSync() {
           title: "Sync complete",
           description: `${result.synced} queued change(s) synced.`,
         })
-        // Reload data-heavy views that use IndexedDB cache.
-        window.location.reload()
+        await refreshAllOfflineData({ updateSwr: true, warmRoutes: false })
         return
       }
 

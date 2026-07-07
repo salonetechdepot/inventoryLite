@@ -5,9 +5,15 @@ import { usePathname, useRouter } from "next/navigation"
 import { BottomNav } from "@/components/bottom-nav"
 import { ThemeSync } from "@/components/theme-sync"
 import { OfflineSync } from "@/components/offline-sync"
+import { BackgroundCacheRefresh } from "@/components/background-cache-refresh"
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt"
 import { SessionExpiryGuard } from "@/components/session-expiry-guard"
 import { useAuth } from "@/hooks/use-auth"
+import { goToLogin } from "@/lib/auth-navigation"
+import {
+  isBrowserOffline,
+  isDashboardOfflinePath,
+} from "@/lib/offline-navigation"
 
 export default function DashboardLayout({
   children,
@@ -24,7 +30,7 @@ export default function DashboardLayout({
   }, [logout])
 
   useEffect(() => {
-    const sync = () => setIsOffline(!navigator.onLine)
+    const sync = () => setIsOffline(isBrowserOffline())
     sync()
     window.addEventListener("online", sync)
     window.addEventListener("offline", sync)
@@ -35,45 +41,9 @@ export default function DashboardLayout({
   }, [])
 
   useEffect(() => {
-    const onClick = (event: MouseEvent) => {
-      if (navigator.onLine) return
-      if (event.defaultPrevented || event.button !== 0) return
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-
-      const target = event.target as Element | null
-      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null
-      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return
-
-      const hrefAttr = anchor.getAttribute("href")
-      if (!hrefAttr || hrefAttr.startsWith("#") || hrefAttr.startsWith("mailto:")) return
-
-      let url: URL
-      try {
-        url = new URL(anchor.href, window.location.origin)
-      } catch {
-        return
-      }
-      if (url.origin !== window.location.origin) return
-
-      if (url.pathname.startsWith("/dashboard/account")) {
-        event.preventDefault()
-        event.stopPropagation()
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      window.location.assign(url.pathname + url.search + url.hash)
-    }
-
-    document.addEventListener("click", onClick, true)
-    return () => document.removeEventListener("click", onClick, true)
-  }, [])
-
-  useEffect(() => {
     if (isLoading) return
     if (sessionExpired || !user) {
-      router.replace(sessionExpired ? "/login?reason=session_expired" : "/login")
+      goToLogin(sessionExpired ? "session_expired" : undefined, router)
     }
   }, [user, isLoading, sessionExpired, router])
 
@@ -93,17 +63,8 @@ export default function DashboardLayout({
 
   if (!user) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background p-6 text-center">
-        <p className="text-lg font-semibold text-foreground">
-          {sessionExpired ? "Session expired" : "Sign in required"}
-        </p>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          {sessionExpired
-            ? "Your session ended at 5:00 AM. Sign in again with a new code to continue."
-            : isOffline
-              ? "Sign in once while online so StockEasy can keep working without a connection."
-              : "Redirecting to login…"}
-        </p>
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        Redirecting to login…
       </div>
     )
   }
@@ -117,7 +78,14 @@ export default function DashboardLayout({
       />
       <ThemeSync />
       <OfflineSync />
+      <BackgroundCacheRefresh />
       <PwaInstallPrompt />
+      {isOffline && pathname && !isDashboardOfflinePath(pathname) ? (
+        <div className="mx-4 mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning-foreground">
+          This page was not saved for offline use. Open it once while online, or go
+          back to a main tab below.
+        </div>
+      ) : null}
       {children}
       <BottomNav />
     </div>

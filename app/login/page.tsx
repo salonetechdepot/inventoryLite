@@ -2,6 +2,7 @@ import { Package } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { AuthOtpFlow } from "@/components/auth-otp-flow"
 import { SessionExpiredNotice } from "@/components/session-expired-notice"
+import { LoginOfflineNotice } from "@/components/login-offline-notice"
 
 export default function LoginPage() {
   return (
@@ -17,6 +18,7 @@ export default function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          <LoginOfflineNotice />
           <SessionExpiredNotice />
           <AuthOtpFlow mode="login" />
         </CardContent>

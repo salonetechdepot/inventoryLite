@@ -1,10 +1,12 @@
 "use client"
 
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { fetchWithOfflineCache, SESSION_CACHE_KEY, clearSessionBackup } from "@/lib/offline-sync"
 import { hasSessionExpiry, isSessionExpired } from "@/lib/session-expiry"
+import { isBrowserOffline } from "@/lib/offline-navigation"
+import { goToLogin } from "@/lib/auth-navigation"
 import { useAuthStore } from "@/stores/auth-store"
 
 interface User {
@@ -31,13 +33,47 @@ export function useAuth() {
   const storeExpiresAt = useAuthStore((s) => s.sessionExpiresAt)
   const logoutStore = useAuthStore((s) => s.logout)
   const isHydrated = useAuthStore((s) => s.isHydrated)
+  const [isOffline, setIsOffline] = useState(false)
 
-  const { data, error, isLoading, mutate } = useSWR<SessionResponse>(
+  useEffect(() => {
+    const markHydrated = () => {
+      if (!useAuthStore.getState().isHydrated) {
+        useAuthStore.setState({ isHydrated: true })
+      }
+    }
+
+    if (useAuthStore.persist.hasHydrated()) {
+      markHydrated()
+    }
+
+    const unsub = useAuthStore.persist.onFinishHydration(markHydrated)
+    const fallback = window.setTimeout(markHydrated, 800)
+
+    return () => {
+      unsub()
+      window.clearTimeout(fallback)
+    }
+  }, [])
+
+  useEffect(() => {
+    const sync = () => setIsOffline(isBrowserOffline())
+    sync()
+    window.addEventListener("online", sync)
+    window.addEventListener("offline", sync)
+    return () => {
+      window.removeEventListener("online", sync)
+      window.removeEventListener("offline", sync)
+    }
+  }, [])
+
+  const { data, error, isLoading: swrLoading, mutate } = useSWR<SessionResponse>(
     SESSION_CACHE_KEY,
     fetcher,
     {
-      revalidateOnFocus: true,
+      revalidateOnFocus: !isOffline,
       revalidateOnReconnect: true,
+      shouldRetryOnError: !isOffline,
+      dedupingInterval: isOffline ? 60_000 : 2_000,
     }
   )
 
@@ -50,7 +86,7 @@ export function useAuth() {
       await logoutStore()
       await clearSessionBackup()
       await mutate({ user: null, sessionExpiresAt: null }, { revalidate: false })
-      router.push(reason === "expired" ? "/login?reason=session_expired" : "/login")
+      goToLogin(reason === "expired" ? "session_expired" : undefined, router)
     },
     [logoutStore, mutate, router]
   )
@@ -65,14 +101,26 @@ export function useAuth() {
     ) {
       return storeUser as User
     }
+    if (isOffline && storeUser && !sessionExpired) {
+      return storeUser as User
+    }
     return null
-  }, [data?.user, sessionExpired, storeUser, storeExpiresAt])
+  }, [data?.user, sessionExpired, storeUser, storeExpiresAt, isOffline])
+
+  const isLoading = useMemo(() => {
+    if (user) return false
+    if (!isHydrated) return true
+    // Signed out — don't block on a network session check (especially offline).
+    if (!storeUser && !data?.user) return false
+    if (isOffline) return false
+    return swrLoading
+  }, [user, isHydrated, storeUser, data?.user, isOffline, swrLoading])
 
   return {
     user,
     sessionExpired,
     sessionExpiresAt,
-    isLoading: (!isHydrated && !user) || isLoading,
+    isLoading,
     isError: error,
     logout,
     mutate,

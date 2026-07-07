@@ -1,10 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Home, Package, ShoppingCart, Receipt, Undo2, User } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { isBrowserOffline } from "@/lib/offline-navigation"
 
 const navItems = [
   { href: "/dashboard", label: "Home", icon: Home },
@@ -17,10 +17,11 @@ const navItems = [
 
 export function BottomNav() {
   const pathname = usePathname()
+  const router = useRouter()
   const [isOffline, setIsOffline] = useState(false)
 
   useEffect(() => {
-    const sync = () => setIsOffline(!navigator.onLine)
+    const sync = () => setIsOffline(isBrowserOffline())
     sync()
     window.addEventListener("online", sync)
     window.addEventListener("offline", sync)
@@ -29,6 +30,12 @@ export function BottomNav() {
       window.removeEventListener("offline", sync)
     }
   }, [])
+
+  const navigate = (href: string, onlineOnly?: boolean) => {
+    if (onlineOnly && isOffline) return
+    if (pathname === href) return
+    router.push(href)
+  }
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card">
@@ -54,19 +61,21 @@ export function BottomNav() {
           }
 
           return (
-            <Link
+            <button
               key={item.href}
-              href={item.href}
+              type="button"
+              onClick={() => navigate(item.href, item.onlineOnly)}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl transition-colors",
                 isActive
                   ? "text-primary bg-primary/10"
                   : "text-muted-foreground hover:text-foreground"
               )}
+              aria-current={isActive ? "page" : undefined}
             >
               <item.icon className="size-6" />
               <span className="text-xs font-medium">{item.label}</span>
-            </Link>
+            </button>
           )
         })}
       </div>

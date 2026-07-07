@@ -61,7 +61,6 @@ export default function AccountPage() {
 
   const handleLogout = async () => {
     await logout()
-    router.push("/login")
   }
 
   const saveSettings = async () => {

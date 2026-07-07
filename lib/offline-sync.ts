@@ -1,7 +1,9 @@
 "use client"
 
+import { mutate } from "swr"
 import { restockQuantityForLine, type ReturnDisposition } from "@/lib/return-inventory"
 import { isSessionExpired, shouldClearStoredSession } from "@/lib/session-expiry"
+import { warmDashboardRscCache } from "@/lib/offline-navigation"
 
 const DB_NAME = "stockeasy-offline-db"
 const DB_VERSION = 1
@@ -17,6 +19,20 @@ export const CATEGORIES_CACHE_KEY = "/api/categories"
 export const DASHBOARD_STATS_CACHE_KEY = "/api/dashboard/stats"
 export const ANALYTICS_CACHE_KEY = "/api/analytics"
 export const SESSION_CACHE_KEY = "/api/auth/session"
+
+/** All API keys refreshed in the background while online (IndexedDB + SWR). */
+export const OFFLINE_DATA_CACHE_KEYS = [
+  SESSION_CACHE_KEY,
+  PRODUCTS_CACHE_KEY,
+  CATEGORIES_CACHE_KEY,
+  DASHBOARD_STATS_CACHE_KEY,
+  SALE_RECEIPTS_CACHE_KEY,
+  RETURN_RECEIPTS_CACHE_KEY,
+  ANALYTICS_CACHE_KEY,
+] as const
+
+/** How often to refresh cached data while the app is online and visible. */
+export const OFFLINE_BACKGROUND_REFRESH_MS = 30_000
 
 const SESSION_LOCAL_KEY = "stockeasy-session-user-v1"
 
@@ -1034,6 +1050,86 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 export const OFFLINE_SYNC_COMPLETE_EVENT = "stockeasy-offline-sync-complete"
+export const OFFLINE_CACHE_REFRESHED_EVENT = "stockeasy-offline-cache-refreshed"
+
+export type OfflineCacheRefreshResult = {
+  refreshed: number
+  failed: number
+  productDetails: number
+}
+
+async function prefetchProductDetailCaches(updateSwr: boolean): Promise<number> {
+  const data = await getCachedData<{ products: Array<{ id: string }> }>(PRODUCTS_CACHE_KEY)
+  const ids = (data?.products ?? []).map((p) => p.id).filter(Boolean)
+  if (ids.length === 0) return 0
+
+  let count = 0
+  await Promise.allSettled(
+    ids.slice(0, 300).map(async (id) => {
+      const key = `/api/products/${id}`
+      const productData = await fetchWithOfflineCache<{ product: unknown }>(key)
+      if (updateSwr) {
+        await mutate(key, productData, { revalidate: false })
+      }
+      count += 1
+    })
+  )
+  return count
+}
+
+/** Fetch all dashboard data from the server, store in IndexedDB, and update SWR. */
+export async function refreshAllOfflineData(options?: {
+  updateSwr?: boolean
+  warmRoutes?: boolean
+}): Promise<OfflineCacheRefreshResult> {
+  if (!isBrowser() || !navigator.onLine) {
+    return { refreshed: 0, failed: 0, productDetails: 0 }
+  }
+
+  const updateSwr = options?.updateSwr !== false
+  const warmRoutes = options?.warmRoutes !== false
+  let refreshed = 0
+  let failed = 0
+
+  await Promise.allSettled(
+    OFFLINE_DATA_CACHE_KEYS.map(async (key) => {
+      try {
+        const data = await fetchWithOfflineCache(key)
+        if (updateSwr) {
+          await mutate(key, data, { revalidate: false })
+        }
+        refreshed += 1
+      } catch {
+        failed += 1
+      }
+    })
+  )
+
+  let productDetails = 0
+  try {
+    productDetails = await prefetchProductDetailCaches(updateSwr)
+  } catch {
+    // Best-effort — list pages still work from products cache.
+  }
+
+  if (warmRoutes) {
+    try {
+      await warmDashboardRscCache()
+    } catch {
+      // ignore
+    }
+  }
+
+  if (isBrowser()) {
+    window.dispatchEvent(
+      new CustomEvent(OFFLINE_CACHE_REFRESHED_EVENT, {
+        detail: { refreshed, failed, productDetails },
+      })
+    )
+  }
+
+  return { refreshed, failed, productDetails }
+}
 
 function notifySyncComplete(detail: { synced: number; failed: number; conflicts: number }) {
   if (!isBrowser()) return

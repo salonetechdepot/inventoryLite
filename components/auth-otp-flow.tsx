@@ -56,6 +56,10 @@ function AuthOtpFlowInner() {
   const sendCode = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    if (!navigator.onLine) {
+      setError("You are offline. Connect to the internet to receive a sign-in code.")
+      return
+    }
     const identity = resolveEmailOrPhone()
     if (!identity.ok) {
       setError(identity.error)
