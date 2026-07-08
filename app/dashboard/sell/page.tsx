@@ -68,6 +68,7 @@ import {
   type PaymentMethodId,
   initialPaymentMethodForCheckout,
 } from "@/lib/payment-methods"
+import { printThermalReceipt } from "@/lib/receipt-print"
 
 const fetcher = fetchWithOfflineCache
 
@@ -540,7 +541,7 @@ function SellPageContent() {
   }
 
   const printReceipt = () => {
-    window.print()
+    printThermalReceipt()
   }
 
   const isReturn = transactionType === "return"
@@ -1080,7 +1081,7 @@ function SellPageContent() {
 
       {/* Receipt Dialog */}
       <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
+        <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
           <DialogHeader className="sr-only">
             <DialogTitle>Receipt</DialogTitle>
           </DialogHeader>

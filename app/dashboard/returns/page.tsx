@@ -36,6 +36,7 @@ import {
   type ReturnCondition,
   type ReturnDisposition,
 } from "@/lib/return-inventory"
+import { printThermalReceipt } from "@/lib/receipt-print"
 
 const fetcher = fetchWithOfflineCache
 
@@ -223,7 +224,7 @@ export default function ReturnsPage() {
     0
   )
   const totalDiscarded = Math.max(0, totalItemsReturned - totalRestocked)
-  const printReceipt = () => window.print()
+  const printReceipt = () => printThermalReceipt()
 
   return (
     <main className="pb-24">
@@ -501,7 +502,7 @@ export default function ReturnsPage() {
           if (!open) setActiveReceipt(null)
         }}
       >
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
+        <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
           <DialogHeader className="sr-only">
             <DialogTitle>Return receipt</DialogTitle>
           </DialogHeader>

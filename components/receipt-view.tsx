@@ -106,8 +106,8 @@ export function ReceiptView({
   const isReturn = String(receipt.type).toUpperCase() === "RETURN"
 
   return (
-    <div className={cn("flex flex-col gap-4 print:gap-2", className)}>
-      <div className="text-center print:mb-2">
+    <div className={cn("receipt-print-root flex flex-col gap-4 print:gap-1", className)}>
+      <div className="receipt-print-header text-center print:mb-0">
         <div
           className={cn(
             "mx-auto mb-3 flex size-14 items-center justify-center rounded-full print:hidden",
@@ -124,25 +124,25 @@ export function ReceiptView({
           <img
             src={shopLogoUrl}
             alt={businessName || "Shop"}
-            className="mx-auto mb-2 size-12 rounded-md object-cover print:size-10"
+            className="mx-auto mb-2 size-12 rounded-md object-cover print:mb-1 print:size-9"
           />
         )}
         {businessName && (
-          <p className="text-base font-bold uppercase tracking-wide print:text-sm">
+          <p className="receipt-print-shop text-base font-bold uppercase tracking-wide print:text-xs">
             {businessName}
           </p>
         )}
-        <h2 className="text-lg font-bold print:text-base">
+        <h2 className="receipt-print-title text-lg font-bold print:text-sm">
           {isReturn ? "Return Receipt" : "Sales Receipt"}
         </h2>
-        <p className="text-xs text-muted-foreground">
+        <p className="receipt-print-meta text-xs text-muted-foreground">
           #{receipt.id.slice(0, 8).toUpperCase()} · {formatDateTime(receipt.created_at)}
         </p>
       </div>
 
       {(receipt.customer_name || receipt.customer_phone) && (
-        <div className="border rounded-lg p-2 text-sm">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">
+        <div className="receipt-print-section border rounded-lg p-2 text-sm print:border-0 print:p-0">
+          <p className="receipt-print-section-label text-xs font-semibold uppercase text-muted-foreground">
             Customer
           </p>
           {receipt.customer_name && <p>Name: {receipt.customer_name}</p>}
@@ -151,9 +151,9 @@ export function ReceiptView({
       )}
 
       {isReturn && receipt.original_receipt_id && (
-        <div className="border rounded-lg p-2 text-sm bg-muted/30">
-          <p className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
-            <Link2 className="size-3" />
+        <div className="receipt-print-section border rounded-lg p-2 text-sm bg-muted/30 print:border-0 print:bg-transparent print:p-0">
+          <p className="receipt-print-section-label text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
+            <Link2 className="size-3 print:hidden" />
             Linked to original sale
           </p>
           <p className="mt-1">
@@ -172,24 +172,29 @@ export function ReceiptView({
       )}
 
       {/* Items */}
-      <div className="border rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+      <div className="receipt-print-section border rounded-lg overflow-hidden print:border-0">
+        <div className="receipt-print-row receipt-print-row-header flex items-center justify-between bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground print:bg-transparent print:px-0">
           <span>Item</span>
           <span>Amount</span>
         </div>
-        <div className="divide-y">
+        <div className="divide-y print:divide-black/30">
           {receipt.sales.map((line) => (
-            <div key={line.id} className="flex justify-between gap-2 px-3 py-2 text-sm">
-              <div className="min-w-0">
-                <p className="font-medium truncate">{line.product_name}</p>
-                <p className="text-xs text-muted-foreground">
+            <div
+              key={line.id}
+              className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm print:px-0 print:py-1 print:text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="receipt-print-item-name font-medium truncate print:whitespace-normal">
+                  {line.product_name}
+                </p>
+                <p className="receipt-print-item-detail text-xs text-muted-foreground">
                   {line.quantity_sold} × {formatPrice(line.unit_price_at_sale)}
                 </p>
                 {isReturn &&
                   (line.return_condition || line.return_disposition) && (
-                    <p className="text-xs mt-0.5 flex flex-wrap gap-1">
+                    <p className="text-xs mt-0.5 flex flex-wrap gap-1 print:mt-0 print:gap-0.5">
                       {line.return_condition && (
-                        <Badge variant="outline" className="h-5 text-[10px] font-normal">
+                        <Badge variant="outline" className="h-5 text-[10px] font-normal print:h-auto print:border-0 print:p-0 print:text-[10px]">
                           {formatReturnCondition(line.return_condition as ReturnCondition)}
                         </Badge>
                       )}
@@ -197,7 +202,7 @@ export function ReceiptView({
                         <Badge
                           variant="outline"
                           className={cn(
-                            "h-5 text-[10px] font-normal",
+                            "h-5 text-[10px] font-normal print:h-auto print:border-0 print:p-0 print:text-[10px]",
                             line.return_disposition === "RESTOCK"
                               ? "border-primary/40 text-primary"
                               : "border-destructive/40 text-destructive"
@@ -211,7 +216,7 @@ export function ReceiptView({
                     </p>
                   )}
               </div>
-              <span className="font-semibold whitespace-nowrap">
+              <span className="receipt-print-amount font-semibold whitespace-nowrap">
                 {formatPrice(line.total_amount)}
               </span>
             </div>
@@ -220,62 +225,76 @@ export function ReceiptView({
       </div>
 
       {/* Totals */}
-      <div className="border rounded-lg divide-y text-sm">
-        <div className="flex justify-between px-3 py-2">
+      <div className="receipt-print-section border rounded-lg divide-y text-sm print:border-0 print:divide-black/30">
+        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
           <span className="text-muted-foreground">Subtotal</span>
           <span>{formatPrice(receipt.subtotal)}</span>
         </div>
         {receipt.discount_amount > 0 && (
-          <div className="flex justify-between px-3 py-2">
+          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
             <span className="text-muted-foreground">Discount</span>
             <span>−{formatPrice(receipt.discount_amount)}</span>
           </div>
         )}
-        <div className="flex justify-between px-3 py-2 font-bold bg-primary/5">
+        <div className="receipt-print-row receipt-print-total-row flex justify-between px-3 py-2 font-bold bg-primary/5 print:bg-transparent print:px-0 print:py-1">
           <span>TOTAL</span>
-          <span className="text-primary text-base">{formatPrice(receipt.net_amount)}</span>
+          <span className="text-primary text-base print:text-xs print:text-black">
+            {formatPrice(receipt.net_amount)}
+          </span>
         </div>
-        <div className="flex justify-between px-3 py-2">
+        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
           <span>Amount Paid</span>
           <span>{formatPrice(receipt.amount_paid)}</span>
         </div>
         {receipt.change_given > 0 && (
-          <div className="flex justify-between px-3 py-2">
+          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
             <span>Change Given</span>
             <span>{formatPrice(receipt.change_given)}</span>
           </div>
         )}
         {receipt.amount_due > 0 && (
-          <div className="flex justify-between px-3 py-2 bg-warning/10">
+          <div className="receipt-print-row flex justify-between px-3 py-2 bg-warning/10 print:bg-transparent print:px-0 print:py-0.5 print:text-xs">
             <span className="font-semibold">Balance Due</span>
-            <span className="font-semibold text-warning">
+            <span className="font-semibold text-warning print:text-black">
               {formatPrice(receipt.amount_due)}
             </span>
           </div>
         )}
-        <div className="flex justify-between px-3 py-2">
+        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
           <span>Status</span>
-          {receipt.is_paid ? (
-            <Badge variant="default" className="bg-primary">
-              Paid
-            </Badge>
-          ) : (
-            <Badge variant="secondary" className="bg-warning/20 text-warning border-warning/40">
-              {receipt.is_part_payment ? "Part Payment" : "Unpaid"}
-            </Badge>
-          )}
+          <span className="hidden print:inline print:font-semibold">
+            {receipt.is_paid
+              ? "Paid"
+              : receipt.is_part_payment
+                ? "Part Payment"
+                : "Unpaid"}
+          </span>
+          <span className="print:hidden">
+            {receipt.is_paid ? (
+              <Badge variant="default" className="bg-primary">
+                Paid
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="bg-warning/20 text-warning border-warning/40">
+                {receipt.is_part_payment ? "Part Payment" : "Unpaid"}
+              </Badge>
+            )}
+          </span>
         </div>
       </div>
 
       {/* Payment history (if any) */}
       {receipt.payments && receipt.payments.length > 0 && (
-        <div className="border rounded-lg overflow-hidden">
-          <div className="bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+        <div className="receipt-print-section border rounded-lg overflow-hidden print:border-0">
+          <div className="receipt-print-section-label bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground print:bg-transparent print:px-0">
             Payment history
           </div>
-          <div className="divide-y">
+          <div className="divide-y print:divide-black/30">
             {receipt.payments.map((p) => (
-              <div key={p.id} className="flex justify-between gap-2 px-3 py-2 text-sm">
+              <div
+                key={p.id}
+                className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm print:px-0 print:py-1 print:text-xs"
+              >
                 <div className="min-w-0">
                   <p className="font-medium">
                     {p.method ? p.method.toUpperCase() : "CASH"}
@@ -285,7 +304,7 @@ export function ReceiptView({
                     {p.note ? ` · ${p.note}` : ""}
                   </p>
                 </div>
-                <span className="font-semibold whitespace-nowrap">
+                <span className="receipt-print-amount font-semibold whitespace-nowrap">
                   {formatPrice(p.amount)}
                 </span>
               </div>
@@ -294,7 +313,18 @@ export function ReceiptView({
         </div>
       )}
 
-      {footerSlot}
+      {receipt.notes && (
+        <div className="receipt-print-section print:text-xs">
+          <p className="receipt-print-section-label">Notes</p>
+          <p>{receipt.notes}</p>
+        </div>
+      )}
+
+      <p className="receipt-print-footer hidden print:block">
+        Thank you for your business
+      </p>
+
+      {footerSlot && <div className="print:hidden">{footerSlot}</div>}
 
       {(onPrint || onClose) && (
         <div className="flex gap-2 print:hidden">

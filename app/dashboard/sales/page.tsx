@@ -44,6 +44,7 @@ import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 import { PAYMENT_METHODS } from "@/lib/payment-methods"
+import { printThermalReceipt } from "@/lib/receipt-print"
 
 const fetcher = fetchWithOfflineCache
 
@@ -428,7 +429,7 @@ function ReceiptDetailsDialog({
   const isReturnReceipt = receipt && String(receipt.type).toUpperCase() === "RETURN"
 
   const handlePrint = () => {
-    window.print()
+    printThermalReceipt()
   }
 
   const handleAddPayment = async () => {
@@ -503,7 +504,7 @@ function ReceiptDetailsDialog({
         }
       }}
     >
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
+      <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
         <DialogHeader className="sr-only">
           <DialogTitle>Receipt details</DialogTitle>
         </DialogHeader>
