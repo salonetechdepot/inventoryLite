@@ -18,6 +18,8 @@ import {
   ChevronDown,
   ChevronUp,
   Link2,
+  Settings2,
+  Radio,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -69,6 +71,11 @@ import {
   initialPaymentMethodForCheckout,
 } from "@/lib/payment-methods"
 import { printThermalReceipt } from "@/lib/receipt-print"
+import { playScanBeep } from "@/lib/scan-feedback"
+import { usePosSettings } from "@/hooks/use-pos-settings"
+import { useHardwareScanner } from "@/hooks/use-hardware-scanner"
+import { useWakeLock } from "@/hooks/use-wake-lock"
+import { PosSettingsPanel } from "@/components/pos-settings-panel"
 
 const fetcher = fetchWithOfflineCache
 
@@ -161,7 +168,18 @@ function SellPageContent() {
   const [amountPaid, setAmountPaid] = useState("0")
   const [isPartPayment, setIsPartPayment] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>("cash")
+  const [showPosSettings, setShowPosSettings] = useState(false)
+  const [searchEditable, setSearchEditable] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const autoPrintedReceiptIdRef = useRef<string | null>(null)
+  const { settings: posSettings } = usePosSettings()
+
+  const scannerPaused =
+    showCheckout ||
+    showReceipt ||
+    showScanner ||
+    showOversellConfirm ||
+    showPosSettings
 
   const { data, isLoading, mutate } = useSWR<{ products: Product[] }>(
     "/api/products",
@@ -169,6 +187,23 @@ function SellPageContent() {
   )
 
   const products = data?.products || []
+
+  useWakeLock(posSettings.keepScreenAwake && !scannerPaused)
+
+  useEffect(() => {
+    if (scannerPaused) return
+    const input = searchInputRef.current
+    if (!input) return
+    input.focus({ preventScroll: true })
+  }, [scannerPaused, transactionType])
+
+  useEffect(() => {
+    if (!showReceipt || !lastReceipt || !posSettings.autoPrintReceipt) return
+    if (autoPrintedReceiptIdRef.current === lastReceipt.id) return
+    autoPrintedReceiptIdRef.current = lastReceipt.id
+    const timer = window.setTimeout(() => printThermalReceipt(), 400)
+    return () => window.clearTimeout(timer)
+  }, [showReceipt, lastReceipt, posSettings.autoPrintReceipt])
 
   useEffect(() => {
     const from = searchParams.get("fromReceipt")
@@ -527,11 +562,14 @@ function SellPageContent() {
     if (matchedProduct) {
       addToCart(matchedProduct)
       setSearch("")
+      setSearchEditable(false)
+      if (posSettings.scanBeep) playScanBeep(true)
       toast({
         title: "Added to cart",
         description: matchedProduct.name,
       })
     } else {
+      if (posSettings.scanBeep) playScanBeep(false)
       toast({
         title: "Product not found",
         description: `No product with scan code "${code.trim()}". Add it under Products first.`,
@@ -540,6 +578,13 @@ function SellPageContent() {
     }
   }
 
+  useHardwareScanner({
+    enabled: posSettings.hardwareScanner,
+    paused: scannerPaused,
+    allowedInputRef: searchInputRef,
+    onScan: handleScanInput,
+  })
+
   const printReceipt = () => {
     printThermalReceipt()
   }
@@ -547,24 +592,42 @@ function SellPageContent() {
   const isReturn = transactionType === "return"
 
   return (
-    <main className="pb-32">
+    <main className="pb-[calc(8rem+env(safe-area-inset-bottom))]">
       {/* Top Header */}
-      <header className="sticky top-0 z-20 bg-background border-b">
+      <header className="sticky top-0 z-20 bg-background border-b pt-[env(safe-area-inset-top)]">
         <div className="p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-xl font-bold leading-tight">
               {isReturn ? "Process Return" : "Make a Sale"}
             </h1>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-11"
-              onClick={() => setShowScanner(true)}
-              aria-label="Open scanner"
-            >
-              <ScanLine className="size-5" />
-            </Button>
+            <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-11"
+                onClick={() => setShowPosSettings(true)}
+                aria-label="POS settings"
+              >
+                <Settings2 className="size-5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-11"
+                onClick={() => setShowScanner(true)}
+                aria-label="Open camera scanner"
+              >
+                <ScanLine className="size-5" />
+              </Button>
+            </div>
           </div>
+
+          {posSettings.hardwareScanner && !scannerPaused && (
+            <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs text-primary">
+              <Radio className="size-3.5 shrink-0 animate-pulse" />
+              <span>Scanner ready — scan barcodes or tap search to type</span>
+            </div>
+          )}
 
           {/* Sale/Return Segmented Toggle */}
           <div className="grid grid-cols-2 gap-1 p-1 bg-muted rounded-lg">
@@ -625,6 +688,7 @@ function SellPageContent() {
             <Input
               ref={searchInputRef}
               type="search"
+              inputMode={searchEditable ? "search" : "none"}
               placeholder="Search or scan products..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -632,10 +696,16 @@ function SellPageContent() {
                 if (e.key === "Enter") {
                   handleScanInput(search)
                   setSearch("")
+                  setSearchEditable(false)
                 }
               }}
-              className="pl-10 h-12 text-base"
+              onClick={() => setSearchEditable(true)}
+              onBlur={() => {
+                if (!search.trim()) setSearchEditable(false)
+              }}
+              className="pl-10 h-12 text-base touch-manipulation"
               autoComplete="off"
+              enterKeyHint="search"
             />
           </div>
         </div>
@@ -741,11 +811,11 @@ function SellPageContent() {
 
       {/* Sticky Cart Bar (when items in cart) */}
       {cart.length > 0 && (
-        <div className="fixed bottom-16 left-0 right-0 z-30 p-3 bg-background/95 backdrop-blur border-t shadow-lg">
+        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] left-0 right-0 z-30 p-3 bg-background/95 backdrop-blur border-t shadow-lg">
           <Button
             onClick={() => setShowCheckout(true)}
             size="lg"
-            className="w-full h-14 text-base font-semibold flex items-center justify-between px-4"
+            className="w-full h-14 text-base font-semibold flex items-center justify-between px-4 touch-manipulation"
           >
             <span className="flex items-center gap-2">
               <ShoppingCart className="size-5" />
@@ -950,9 +1020,24 @@ function SellPageContent() {
                     value={amountPaid}
                     onChange={(e) => setAmountPaid(e.target.value)}
                     className="h-11"
+                    inputMode="decimal"
                   />
                 </div>
               </div>
+
+              {transactionType === "sale" && !isPartPayment && netTotal > 0 && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full h-12 text-base font-semibold touch-manipulation"
+                  onClick={() => {
+                    setAmountPaid(String(netTotal))
+                    setPaymentMethod("cash")
+                  }}
+                >
+                  Exact cash — {formatPrice(netTotal)}
+                </Button>
+              )}
 
               <Button
                 type="button"
@@ -1078,6 +1163,20 @@ function SellPageContent() {
         onClose={() => setShowScanner(false)}
         onScan={handleScanInput}
       />
+
+      <Drawer open={showPosSettings} onOpenChange={setShowPosSettings}>
+        <DrawerContent className="max-h-[85vh]">
+          <DrawerHeader className="text-left">
+            <DrawerTitle>Handheld POS settings</DrawerTitle>
+            <DrawerDescription>
+              Tuned for barcode scanners and 58mm receipt printers. Saved on this device.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))] divide-y">
+            <PosSettingsPanel />
+          </div>
+        </DrawerContent>
+      </Drawer>
 
       {/* Receipt Dialog */}
       <Dialog open={showReceipt} onOpenChange={setShowReceipt}>

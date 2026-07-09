@@ -70,7 +70,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-background pb-[calc(5rem+env(safe-area-inset-bottom))]">
       <SessionExpiryGuard
         sessionExpiresAt={sessionExpiresAt}
         sessionExpired={sessionExpired}
