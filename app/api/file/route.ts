@@ -1,14 +1,13 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { get } from '@vercel/blob'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 
 export async function GET(request: NextRequest) {
   try {
     // Check if user is authenticated
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const pathname = request.nextUrl.searchParams.get('pathname')
 

@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 
 // GET all categories for current user
 export async function GET() {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const categories = await prisma.category.findMany({
       where: { tenantId: session.tenantId },
@@ -37,10 +36,9 @@ export async function GET() {
 // POST create new category
 export async function POST(request: Request) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { name, icon } = await request.json()
 

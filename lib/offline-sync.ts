@@ -1170,7 +1170,12 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
     const data = (await res.json()) as T
 
     if (cacheKey === SESSION_CACHE_KEY) {
-      const sessionData = data as SessionBackup
+      const sessionData = data as SessionBackup & { locked?: boolean }
+      if (sessionData.locked) {
+        await clearSessionBackup()
+        await cacheData(cacheKey, data)
+        return data as T
+      }
       if (sessionData.user && shouldClearStoredSession(sessionData.sessionExpiresAt)) {
         await clearSessionBackup()
         return { user: null, sessionExpiresAt: null } as T

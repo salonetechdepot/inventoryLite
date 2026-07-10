@@ -1,6 +1,6 @@
 import { put, del } from '@vercel/blob'
 import { type NextRequest, NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 
 const VALID_IMAGE_TYPES = new Map([
   ['image/jpeg', 'jpg'],
@@ -29,10 +29,9 @@ function pathnameFromUploadUrl(url: string): string | null {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const formData = await request.formData()
     const file = formData.get('file') as File
@@ -73,10 +72,9 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { url } = await request.json()
 

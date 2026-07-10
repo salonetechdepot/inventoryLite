@@ -9,6 +9,8 @@ import {
   Package,
   Receipt,
   ShoppingCart,
+  Lock,
+  Unlock,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -47,6 +49,7 @@ interface AdminUserRow {
   receipt_count: number
   sale_count: number
   is_admin: boolean
+  is_locked: boolean
 }
 
 interface AdminUserDetail {
@@ -56,6 +59,8 @@ interface AdminUserDetail {
   business_name: string
   created_at: string
   is_admin: boolean
+  is_locked: boolean
+  locked_reason?: string | null
   counts: {
     products: number
     receipts: number
@@ -76,6 +81,7 @@ export default function AdminUsersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AdminUserRow | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [locking, setLocking] = useState(false)
 
   const listUrl = useMemo(() => {
     const params = new URLSearchParams({ limit: "200" })
@@ -88,7 +94,7 @@ export default function AdminUsersPage() {
     fetcher
   )
 
-  const { data: detailData, isLoading: detailLoading } = useSWR<{
+  const { data: detailData, isLoading: detailLoading, mutate: mutateDetail } = useSWR<{
     user: AdminUserDetail
   }>(selectedId ? `/api/admin/users/${selectedId}` : null, fetcher)
 
@@ -120,6 +126,41 @@ export default function AdminUsersPage() {
       await mutate()
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleLockToggle = async (locked: boolean) => {
+    if (!detail) return
+    setLocking(true)
+    try {
+      const res = await fetch(`/api/admin/users/${detail.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locked,
+          reason: locked ? "Account locked by platform operator." : undefined,
+        }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        toast({
+          title: locked ? "Could not lock account" : "Could not unlock account",
+          description: body.error || "Try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      toast({
+        title: locked ? "Account locked" : "Account unlocked",
+        description: locked
+          ? `${detail.business_name} will see the locked screen when online.`
+          : `${detail.business_name} can sign in again.`,
+      })
+      await mutate()
+      if (detail.id) await mutateDetail()
+      setSelectedId(detail.id)
+    } finally {
+      setLocking(false)
     }
   }
 
@@ -176,6 +217,11 @@ export default function AdminUsersPage() {
                       {user.is_admin && (
                         <Badge variant="secondary" className="text-[10px]">
                           Operator
+                        </Badge>
+                      )}
+                      {user.is_locked && (
+                        <Badge variant="destructive" className="text-[10px]">
+                          Locked
                         </Badge>
                       )}
                     </div>
@@ -275,6 +321,25 @@ export default function AdminUsersPage() {
             <Button variant="outline" onClick={() => setSelectedId(null)}>
               Close
             </Button>
+            {detail && !detail.is_admin && (
+              <Button
+                variant={detail.is_locked ? "default" : "secondary"}
+                disabled={locking}
+                onClick={() => void handleLockToggle(!detail.is_locked)}
+              >
+                {detail.is_locked ? (
+                  <>
+                    <Unlock className="mr-2 size-4" />
+                    {locking ? "Unlocking…" : "Unlock account"}
+                  </>
+                ) : (
+                  <>
+                    <Lock className="mr-2 size-4" />
+                    {locking ? "Locking…" : "Lock account"}
+                  </>
+                )}
+              </Button>
+            )}
             {detail && !detail.is_admin && (
               <Button
                 variant="destructive"

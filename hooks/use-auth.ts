@@ -8,6 +8,7 @@ import { hasSessionExpiry, isSessionExpired } from "@/lib/session-expiry"
 import { isBrowserOffline } from "@/lib/offline-navigation"
 import { goToLogin } from "@/lib/auth-navigation"
 import { useAuthStore } from "@/stores/auth-store"
+import type { SupportContact } from "@/lib/tenant-lock"
 
 interface User {
   id: string
@@ -23,6 +24,12 @@ interface User {
 type SessionResponse = {
   user: User | null
   sessionExpiresAt: string | null
+  locked?: boolean
+  message?: string
+  support?: SupportContact
+  lock?: {
+    lockedReason?: string | null
+  }
 }
 
 const fetcher = fetchWithOfflineCache
@@ -80,6 +87,20 @@ export function useAuth() {
   const sessionExpiresAt = data?.sessionExpiresAt ?? storeExpiresAt ?? null
   const sessionExpired =
     hasSessionExpiry(sessionExpiresAt) && isSessionExpired(sessionExpiresAt)
+  const accountLocked = Boolean(data?.locked) && !isOffline
+
+  useEffect(() => {
+    if (!accountLocked) return
+    void (async () => {
+      await logoutStore()
+      await clearSessionBackup()
+      await mutate(
+        { user: null, sessionExpiresAt: null, locked: true, support: data?.support },
+        { revalidate: false }
+      )
+      router.replace("/account-locked")
+    })()
+  }, [accountLocked, logoutStore, mutate, router, data?.support])
 
   const logout = useCallback(
     async (reason?: "expired") => {
@@ -92,6 +113,7 @@ export function useAuth() {
   )
 
   const user = useMemo(() => {
+    if (accountLocked) return null
     if (sessionExpired) return null
     if (data?.user) return data.user
     if (
@@ -105,9 +127,10 @@ export function useAuth() {
       return storeUser as User
     }
     return null
-  }, [data?.user, sessionExpired, storeUser, storeExpiresAt, isOffline])
+  }, [data?.user, accountLocked, sessionExpired, storeUser, storeExpiresAt, isOffline])
 
   const isLoading = useMemo(() => {
+    if (accountLocked) return false
     if (user) return false
     if (!isHydrated) return true
     // Signed out — don't block on a network session check (especially offline).
@@ -118,6 +141,7 @@ export function useAuth() {
 
   return {
     user,
+    accountLocked,
     sessionExpired,
     sessionExpiresAt,
     isLoading,

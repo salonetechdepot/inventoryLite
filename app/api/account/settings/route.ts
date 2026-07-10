@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
@@ -10,10 +10,9 @@ function isValidHexColor(value: string) {
 
 export async function PATCH(request: Request) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { themeColor, shopLogoUrl } = (await request.json()) as {
       themeColor?: string | null

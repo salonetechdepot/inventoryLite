@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { getReturnableLinesForReceipt } from '@/lib/return-from-sale'
 
 export async function GET(
@@ -7,10 +7,9 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { id } = await context.params
     const result = await getReturnableLinesForReceipt(session.tenantId, id)

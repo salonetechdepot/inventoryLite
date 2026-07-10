@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -7,10 +7,9 @@ type RouteContext = { params: Promise<{ id: string }> }
 // PATCH update category
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { id } = await context.params
     const { name, icon } = await request.json()
@@ -54,10 +53,9 @@ export async function PATCH(request: Request, context: RouteContext) {
 // DELETE category (products lose category link)
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const { id } = await context.params
 

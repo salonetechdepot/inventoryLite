@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createSession, ensureTenantWorkspace } from '@/lib/auth'
 import { LITE_INVENTORY_MODULE_ID, SUPER_ADMIN_ROLE } from '@/lib/constants'
 import { parseJsonBody } from '@/lib/api-validation'
+import { getTenantLockInfo, lockedAccountResponse } from '@/lib/tenant-lock'
 
 const establishSchema = z.object({
   token: z.string().min(1),
@@ -49,6 +50,11 @@ export async function POST(request: Request) {
         { error: 'Access denied. Lite Inventory System module is required.' },
         { status: 403 }
       )
+    }
+
+    const lock = await getTenantLockInfo(tenantId)
+    if (lock.isLocked) {
+      return lockedAccountResponse(lock)
     }
 
     const tenant = {

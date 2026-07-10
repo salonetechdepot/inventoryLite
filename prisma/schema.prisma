@@ -15,6 +15,10 @@ model TenantSettings {
   businessName String?  @map("business_name") @db.VarChar(255)
   themeColor   String?  @map("theme_color") @db.VarChar(20)
   shopLogoUrl  String?  @map("shop_logo_url") @db.VarChar(500)
+  isLocked     Boolean  @default(false) @map("is_locked")
+  lockedAt     DateTime? @map("locked_at") @db.Timestamp(6)
+  lockedReason String?  @map("locked_reason") @db.VarChar(500)
+  lockedBy     String?  @map("locked_by") @db.VarChar(255)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 

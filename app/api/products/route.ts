@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import { formatProductResponse } from '@/lib/format-product'
 import { parseSpecifications } from '@/lib/product-specifications'
@@ -30,10 +30,9 @@ const productCreateSchema = z.object({
 // GET all products for current user
 export async function GET() {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const products = await prisma.product.findMany({
       where: { tenantId: session.tenantId },
@@ -61,10 +60,9 @@ export async function GET() {
 // POST create new product
 export async function POST(request: Request) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const parsed = await parseJsonBody(request, productCreateSchema)
     if (!parsed.ok) return parsed.response

@@ -20,7 +20,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { user, isLoading, sessionExpired, sessionExpiresAt, logout } = useAuth()
+  const { user, isLoading, sessionExpired, sessionExpiresAt, logout, accountLocked } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const [isOffline, setIsOffline] = useState(false)
@@ -42,10 +42,14 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (isLoading) return
+    if (accountLocked) {
+      router.replace("/account-locked")
+      return
+    }
     if (sessionExpired || !user) {
       goToLogin(sessionExpired ? "session_expired" : undefined, router)
     }
-  }, [user, isLoading, sessionExpired, router])
+  }, [user, isLoading, accountLocked, sessionExpired, router])
 
   useEffect(() => {
     if (isOffline && pathname?.startsWith("/dashboard/account")) {

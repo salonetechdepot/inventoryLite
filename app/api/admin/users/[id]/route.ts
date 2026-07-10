@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server'
 import { isAdminEmail, requireAdminSession } from '@/lib/admin'
 import { prisma } from '@/lib/prisma'
+import { setTenantLockState } from '@/lib/tenant-lock'
 import { validateRouteId } from '@/lib/api-validation'
+import { z } from 'zod'
 
 type RouteContext = { params: Promise<{ id: string }> }
+
+const lockSchema = z.object({
+  locked: z.boolean(),
+  reason: z.string().trim().max(500).optional(),
+})
 
 export async function GET(_request: Request, context: RouteContext) {
   const session = await requireAdminSession()
@@ -51,6 +58,9 @@ export async function GET(_request: Request, context: RouteContext) {
       business_name: tenant.businessName,
       theme_color: tenant.themeColor,
       shop_logo_url: tenant.shopLogoUrl,
+      is_locked: tenant.isLocked,
+      locked_at: tenant.lockedAt,
+      locked_reason: tenant.lockedReason,
       created_at: tenant.createdAt,
       is_admin: isAdminEmail(tenant.email),
       counts: { products, receipts, sales, categories, payments },
@@ -105,4 +115,61 @@ export async function DELETE(_request: Request, context: RouteContext) {
   ])
 
   return NextResponse.json({ ok: true })
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const session = await requireAdminSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const { id } = await context.params
+  const invalidId = validateRouteId(id)
+  if (invalidId) return invalidId
+
+  let body: z.infer<typeof lockSchema>
+  try {
+    body = lockSchema.parse(await request.json())
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
+
+  const target = await prisma.tenantSettings.findUnique({
+    where: { tenantId: id },
+  })
+  if (!target) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+  }
+
+  if (body.locked && session.tenantId === id) {
+    return NextResponse.json(
+      { error: 'You cannot lock your own operator tenant.' },
+      { status: 400 }
+    )
+  }
+
+  if (body.locked && isAdminEmail(target.email)) {
+    return NextResponse.json(
+      { error: 'Cannot lock an operator tenant listed in ADMIN_EMAILS.' },
+      { status: 400 }
+    )
+  }
+
+  const updated = await setTenantLockState({
+    tenantId: id,
+    locked: body.locked,
+    reason: body.reason,
+    lockedBy: session.email,
+  })
+
+  return NextResponse.json({
+    ok: true,
+    tenant: {
+      id: updated.tenantId,
+      is_locked: updated.isLocked,
+      locked_at: updated.lockedAt,
+      locked_reason: updated.lockedReason,
+      locked_by: updated.lockedBy,
+    },
+  })
 }

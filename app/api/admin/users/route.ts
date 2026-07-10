@@ -38,9 +38,12 @@ export async function GET(request: Request) {
         email: tenant.email,
         phone_e164: tenant.phoneE164,
         business_name: tenant.businessName,
+        is_locked: tenant.isLocked,
         created_at: tenant.createdAt,
         is_admin: isAdminEmail(tenant.email),
-        counts: { products, receipts, sales },
+        product_count: products,
+        receipt_count: receipts,
+        sale_count: sales,
       }
     })
   )

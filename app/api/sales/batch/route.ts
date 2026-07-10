@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
 import {
@@ -62,10 +62,9 @@ class InsufficientStockError extends Error {
 // POST record a checkout (cart -> single Receipt with multiple Sale lines + initial Payment)
 export async function POST(request: Request) {
   try {
-    const session = await getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const sessionResult = await getApiSession()
+    if (sessionResult instanceof NextResponse) return sessionResult
+    const session = sessionResult
 
     const idempotencyKey = idempotencyKeyFromRequest(request)
     if (idempotencyKey) {
