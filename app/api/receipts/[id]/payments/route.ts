@@ -51,7 +51,7 @@ export async function POST(
       // Cap the credited amount at the outstanding balance.
       const credited = Math.min(amountValue, currentDue)
       const overflow = amountValue - credited
-      const newPaid = currentPaid + amountValue
+      const newPaid = currentPaid + credited
       const newDue = Math.max(0, currentDue - credited)
       const newChange = Number(receipt.changeGiven) + overflow
       const nowPaid = newDue <= 0
@@ -60,7 +60,7 @@ export async function POST(
         data: {
           tenantId: session.tenantId,
           receiptId: receipt.id,
-          amount: amountValue,
+          amount: credited,
           method: (method || 'cash').toString().slice(0, 50),
           note: note ? note.toString().slice(0, 255) : null,
         },

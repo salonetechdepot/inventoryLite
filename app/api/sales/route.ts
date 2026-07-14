@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
+import { resolveCheckoutPayment } from '@/lib/checkout-payment'
 
 // GET all sales for current user
 export async function GET(request: Request) {
@@ -94,10 +95,15 @@ export async function POST(request: Request) {
     const totalAmount = quantity * unitPrice
     const safeDiscount = Math.max(0, Number(discountAmount || 0))
     const netAmount = Math.max(0, totalAmount - safeDiscount)
-    const safeAmountPaid = Math.max(0, Number(amountPaid || 0))
-    const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
-    const amountDue = isPartPayment ? negotiatedShortfall : 0
-    const changeGiven = Math.max(0, safeAmountPaid - netAmount)
+    const {
+      amountReceived,
+      changeGiven,
+      amountDue,
+    } = resolveCheckoutPayment({
+      netAmount,
+      amountTendered: Number(amountPaid || 0),
+      isPartPayment: Boolean(isPartPayment),
+    })
 
     // Record sale
     const [saleResult] = await prisma.$transaction([
@@ -110,7 +116,7 @@ export async function POST(request: Request) {
           customerName: customerName?.trim() || null,
           customerPhone: customerPhone?.trim() || null,
           discountAmount: safeDiscount,
-          amountPaid: safeAmountPaid,
+          amountPaid: amountReceived,
           amountDue,
           changeGiven,
           isPartPayment: Boolean(isPartPayment),

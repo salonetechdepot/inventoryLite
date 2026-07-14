@@ -4,6 +4,7 @@ import { mutate } from "swr"
 import { restockQuantityForLine, type ReturnDisposition } from "@/lib/return-inventory"
 import { isSessionExpired, shouldClearStoredSession } from "@/lib/session-expiry"
 import { warmDashboardRscCache } from "@/lib/offline-navigation"
+import { resolveCheckoutPayment } from "@/lib/checkout-payment"
 
 const DB_NAME = "stockeasy-offline-db"
 const DB_VERSION = 1
@@ -505,12 +506,17 @@ async function buildOptimisticBatchReceiptAsync(
     return sum + item.quantity * Number(p?.unit_price ?? 0)
   }, 0)
   const netAmount = Math.max(0, subtotal - safeDiscount)
-  const safeAmountPaid = Math.max(0, Number(payload.amountPaid ?? 0))
-  const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
   const isPartPayment = Boolean(payload.isPartPayment)
-  const amountDue = isPartPayment ? negotiatedShortfall : 0
-  const changeGiven = Math.max(0, safeAmountPaid - netAmount)
-  const isPaid = amountDue <= 0
+  const {
+    amountReceived,
+    changeGiven,
+    amountDue,
+    isPaid,
+  } = resolveCheckoutPayment({
+    netAmount,
+    amountTendered: Number(payload.amountPaid ?? 0),
+    isPartPayment,
+  })
   const createdAt = new Date().toISOString()
   const customerName = typeof payload.customerName === "string" ? payload.customerName.trim() : ""
   const customerPhone = typeof payload.customerPhone === "string" ? payload.customerPhone.trim() : ""
@@ -534,11 +540,11 @@ async function buildOptimisticBatchReceiptAsync(
   })
 
   const payments =
-    safeAmountPaid > 0
+    amountReceived > 0
       ? [
           {
             id: `${receiptId}-pay`,
-            amount: safeAmountPaid,
+            amount: amountReceived,
             method:
               typeof payload.paymentMethod === "string"
                 ? payload.paymentMethod.trim() || "cash"
@@ -557,7 +563,7 @@ async function buildOptimisticBatchReceiptAsync(
     subtotal,
     discount_amount: safeDiscount,
     net_amount: netAmount,
-    amount_paid: safeAmountPaid,
+    amount_paid: amountReceived,
     amount_due: amountDue,
     change_given: changeGiven,
     is_part_payment: isPartPayment,
@@ -719,13 +725,13 @@ async function applyOptimisticPaymentMutation(input: {
       const currentDue = Number(receipt.amount_due ?? 0)
       const credited = Math.min(amount, currentDue)
       const overflow = amount - credited
-      const newPaid = Number(receipt.amount_paid ?? 0) + amount
+      const newPaid = Number(receipt.amount_paid ?? 0) + credited
       const newDue = Math.max(0, currentDue - credited)
       const newChange = Number(receipt.change_given ?? 0) + overflow
       const nowPaid = newDue <= 0
       const newPayment = {
         id: `local-pay-${crypto.randomUUID()}`,
-        amount,
+        amount: credited,
         method,
         note,
         created_at: createdAt,

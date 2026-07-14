@@ -72,6 +72,7 @@ import {
 } from "@/lib/payment-methods"
 import { printThermalReceipt } from "@/lib/receipt-print"
 import { playScanBeep } from "@/lib/scan-feedback"
+import { resolveCheckoutPayment } from "@/lib/checkout-payment"
 import { usePosSettings } from "@/hooks/use-pos-settings"
 import { useHardwareScanner } from "@/hooks/use-hardware-scanner"
 import { useWakeLock } from "@/hooks/use-wake-lock"
@@ -257,10 +258,13 @@ function SellPageContent() {
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const discountValue = Math.max(0, Number(discountAmount) || 0)
   const netTotal = Math.max(0, cartTotal - discountValue)
-  const amountPaidValue = Math.max(0, Number(amountPaid) || 0)
-  const negotiatedShortfall = Math.max(0, netTotal - amountPaidValue)
-  const amountDue = isPartPayment ? negotiatedShortfall : 0
-  const changeGiven = Math.max(0, amountPaidValue - netTotal)
+  const amountTendered = Math.max(0, Number(amountPaid) || 0)
+  const checkoutPayment = resolveCheckoutPayment({
+    netAmount: netTotal,
+    amountTendered,
+    isPartPayment,
+  })
+  const { amountReceived, amountDue, changeGiven } = checkoutPayment
 
   const getRemainingStock = (product: Product) => {
     const cartItem = cart.find((item) => item.product.id === product.id)
@@ -380,13 +384,13 @@ function SellPageContent() {
     if (cart.length === 0) return
 
     if (transactionType === "sale") {
-      if (!isPartPayment && amountPaidValue < netTotal) {
+      if (!isPartPayment && amountTendered < netTotal) {
         setError(
           "Amount paid is less than total. Enable Part Payment to record a balance owed."
         )
         return
       }
-      if (isPartPayment && amountPaidValue >= netTotal) {
+      if (isPartPayment && amountTendered >= netTotal) {
         setIsPartPayment(false)
       }
     }
@@ -397,7 +401,7 @@ function SellPageContent() {
     const resolvedPaymentMethod =
       transactionType === "return"
         ? "cash"
-        : amountPaidValue > 0
+        : amountTendered > 0
           ? paymentMethod
           : isPartPayment
             ? "credit"
@@ -417,7 +421,7 @@ function SellPageContent() {
         ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
         ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
         discountAmount: discountValue,
-        amountPaid: amountPaidValue,
+        amountPaid: amountTendered,
         isPartPayment,
         paymentMethod: resolvedPaymentMethod,
         ...(originalReceiptId && transactionType === "return"
@@ -470,11 +474,11 @@ function SellPageContent() {
                 })
               ),
               payments:
-                amountPaidValue > 0
+                amountReceived > 0
                   ? [
                       {
                         id: "initial",
-                        amount: amountPaidValue,
+                        amount: amountReceived,
                         method: resolvedPaymentMethod,
                         note: "initial payment",
                         created_at: new Date().toISOString(),
@@ -498,7 +502,7 @@ function SellPageContent() {
           subtotal: cartTotal,
           discount_amount: discountValue,
           net_amount: netTotal,
-          amount_paid: amountPaidValue,
+          amount_paid: amountReceived,
           amount_due: amountDue,
           change_given: changeGiven,
           is_part_payment: isPartPayment,
@@ -514,11 +518,11 @@ function SellPageContent() {
             return_disposition: item.returnDisposition,
           })),
           payments:
-            amountPaidValue > 0
+            amountReceived > 0
               ? [
                   {
                     id: "initial",
-                    amount: amountPaidValue,
+                    amount: amountReceived,
                     method: resolvedPaymentMethod,
                     note: "initial payment",
                     created_at: new Date().toISOString(),
@@ -1010,7 +1014,7 @@ function SellPageContent() {
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">
-                    Amount paid
+                    Cash tendered
                   </label>
                   <Input
                     type="number"
@@ -1046,7 +1050,7 @@ function SellPageContent() {
                   setIsPartPayment((prev) => {
                     const next = !prev
                     setPaymentMethod(
-                      initialPaymentMethodForCheckout(next, amountPaidValue)
+                      initialPaymentMethodForCheckout(next, amountTendered)
                     )
                     return next
                   })
@@ -1056,7 +1060,7 @@ function SellPageContent() {
                 {isPartPayment ? "✓ Part payment enabled" : "Enable part payment"}
               </Button>
 
-              {transactionType === "sale" && amountPaidValue > 0 && (
+              {transactionType === "sale" && amountTendered > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Payment method</p>
                   <div className="grid grid-cols-2 gap-2">
@@ -1079,7 +1083,7 @@ function SellPageContent() {
                 </div>
               )}
 
-              {transactionType === "sale" && isPartPayment && amountPaidValue <= 0 && (
+              {transactionType === "sale" && isPartPayment && amountTendered <= 0 && (
                 <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
                   No payment collected — balance will be recorded as credit owed.
                 </div>
@@ -1105,6 +1109,12 @@ function SellPageContent() {
                     {formatPrice(netTotal)}
                   </span>
                 </div>
+                {amountTendered > 0 && (
+                  <div className="flex justify-between p-3 text-sm">
+                    <span className="text-muted-foreground">Amount received</span>
+                    <span className="font-semibold">{formatPrice(amountReceived)}</span>
+                  </div>
+                )}
                 {amountDue > 0 && (
                   <div className="flex justify-between p-3 text-sm bg-warning/5">
                     <span className="text-warning-foreground">Balance due</span>

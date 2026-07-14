@@ -11,6 +11,7 @@ import {
   type ReturnCondition,
   type ReturnDisposition,
 } from "@/lib/return-inventory"
+import { cashTenderedFromReceipt } from "@/lib/checkout-payment"
 
 export interface ReceiptPayment {
   id: string
@@ -242,13 +243,23 @@ export function ReceiptView({
             {formatPrice(receipt.net_amount)}
           </span>
         </div>
+        {receipt.change_given > 0 && (
+          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+            <span className="text-muted-foreground">Cash tendered</span>
+            <span>
+              {formatPrice(
+                cashTenderedFromReceipt(receipt.amount_paid, receipt.change_given)
+              )}
+            </span>
+          </div>
+        )}
         <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
-          <span>Amount Paid</span>
+          <span className="text-muted-foreground">Amount received</span>
           <span>{formatPrice(receipt.amount_paid)}</span>
         </div>
         {receipt.change_given > 0 && (
           <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
-            <span>Change Given</span>
+            <span className="text-muted-foreground">Change given</span>
             <span>{formatPrice(receipt.change_given)}</span>
           </div>
         )}

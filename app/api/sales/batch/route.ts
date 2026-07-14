@@ -19,6 +19,7 @@ import {
 } from '@/lib/return-inventory'
 import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
 import { parseSpecifications, saleLineProductName } from '@/lib/product-specifications'
+import { resolveCheckoutPayment } from '@/lib/checkout-payment'
 import { z } from 'zod'
 
 interface SaleItem {
@@ -165,11 +166,16 @@ export async function POST(request: Request) {
     }, 0)
     const safeDiscount = Math.max(0, Number(discountAmount || 0))
     const netAmount = Math.max(0, subtotal - safeDiscount)
-    const safeAmountPaid = Math.max(0, Number(amountPaid || 0))
-    const negotiatedShortfall = Math.max(0, netAmount - safeAmountPaid)
-    const amountDue = isPartPayment ? negotiatedShortfall : 0
-    const changeGiven = Math.max(0, safeAmountPaid - netAmount)
-    const isPaid = amountDue <= 0
+    const {
+      amountReceived,
+      changeGiven,
+      amountDue,
+      isPaid,
+    } = resolveCheckoutPayment({
+      netAmount,
+      amountTendered: Number(amountPaid || 0),
+      isPartPayment: Boolean(isPartPayment),
+    })
 
     // Single DB transaction: receipt + sales + product stock updates + initial payment
     const response = await prisma.$transaction(async (tx) => {
@@ -182,7 +188,7 @@ export async function POST(request: Request) {
           subtotal,
           discountAmount: safeDiscount,
           netAmount,
-          amountPaid: safeAmountPaid,
+          amountPaid: amountReceived,
           amountDue,
           changeGiven,
           isPartPayment: Boolean(isPartPayment),
@@ -215,7 +221,7 @@ export async function POST(request: Request) {
             customerName: customerName?.trim() || null,
             customerPhone: customerPhone?.trim() || null,
             discountAmount: safeDiscount,
-            amountPaid: safeAmountPaid,
+            amountPaid: amountReceived,
             changeGiven,
             amountDue,
             isPartPayment: Boolean(isPartPayment),
@@ -250,12 +256,12 @@ export async function POST(request: Request) {
         }
       }
 
-      if (safeAmountPaid > 0) {
+      if (amountReceived > 0) {
         await tx.payment.create({
           data: {
             tenantId: session.tenantId,
             receiptId: receipt.id,
-            amount: safeAmountPaid,
+            amount: amountReceived,
             method: paymentMethod?.trim() || 'cash',
             note: 'initial payment',
           },
