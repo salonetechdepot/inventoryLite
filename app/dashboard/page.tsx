@@ -13,6 +13,7 @@ import {
   Undo2,
   WifiOff,
   BookUser,
+  Wallet,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -171,6 +172,25 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      <Card className="mb-6">
+        <CardContent className="p-4">
+          <Link href="/dashboard/day-close" className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <Wallet className="size-5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold">End-of-day close</p>
+                <p className="text-sm text-muted-foreground">
+                  Count cash and match today&apos;s sales
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="size-5 shrink-0 text-muted-foreground" />
+          </Link>
+        </CardContent>
+      </Card>
 
       {/* Low Stock Alert */}
       {!isLoading && lowStockProducts.length > 0 && (

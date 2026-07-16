@@ -12,6 +12,7 @@ import {
   Paintbrush,
   AlertTriangle,
   BookUser,
+  Wallet,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -174,6 +175,22 @@ export default function AccountPage() {
               <Separator />
             </>
           )}
+          <Link
+            href="/dashboard/day-close"
+            className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"
+          >
+            <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <Wallet className="size-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium">End-of-day close</h3>
+              <p className="text-sm text-muted-foreground">
+                Count cash and reconcile today&apos;s payments
+              </p>
+            </div>
+            <ChevronRight className="size-5 text-muted-foreground shrink-0" />
+          </Link>
+          <Separator />
           <Link
             href="/dashboard/debtors"
             className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"

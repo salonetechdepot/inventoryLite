@@ -150,6 +150,35 @@ model Payment {
   @@map("payments")
 }
 
+/// End-of-day cash / payment reconciliation for one business calendar day.
+model DayClose {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  /// Calendar day in Africa/Freetown (stored as date at midnight UTC).
+  businessDate     DateTime @map("business_date") @db.Date
+  expectedByMethod Json     @map("expected_by_method")
+  countedByMethod  Json     @map("counted_by_method")
+  expectedCash     Decimal  @default(0.00) @map("expected_cash") @db.Decimal(15, 2)
+  countedCash      Decimal  @default(0.00) @map("counted_cash") @db.Decimal(15, 2)
+  cashVariance     Decimal  @default(0.00) @map("cash_variance") @db.Decimal(15, 2)
+  expectedTotal    Decimal  @default(0.00) @map("expected_total") @db.Decimal(15, 2)
+  countedTotal     Decimal  @default(0.00) @map("counted_total") @db.Decimal(15, 2)
+  totalVariance    Decimal  @default(0.00) @map("total_variance") @db.Decimal(15, 2)
+  changeGivenTotal Decimal  @default(0.00) @map("change_given_total") @db.Decimal(15, 2)
+  saleCount        Int      @default(0) @map("sale_count")
+  returnCount      Int      @default(0) @map("return_count")
+  paymentCount     Int      @default(0) @map("payment_count")
+  notes            String?  @db.VarChar(500)
+  closedAt         DateTime @default(now()) @map("closed_at") @db.Timestamp(6)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@unique([tenantId, businessDate], map: "day_closes_tenant_business_date_unique")
+  @@index([tenantId], map: "idx_day_closes_tenant_id")
+  @@index([businessDate], map: "idx_day_closes_business_date")
+  @@map("day_closes")
+}
+
 enum SaleType {
   SALE
   RETURN
