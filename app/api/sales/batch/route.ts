@@ -171,11 +171,26 @@ export async function POST(request: Request) {
       changeGiven,
       amountDue,
       isPaid,
+      isPartPayment: storeIsPartPayment,
     } = resolveCheckoutPayment({
       netAmount,
       amountTendered: Number(amountPaid || 0),
       isPartPayment: Boolean(isPartPayment),
     })
+
+    if (!isReturn && amountDue > 0) {
+      const name = customerName?.trim() || ''
+      const phone = customerPhone?.trim() || ''
+      if (!name && !phone) {
+        return NextResponse.json(
+          {
+            error:
+              'Customer name or phone is required for credit / part payment so you can track who owes the balance.',
+          },
+          { status: 400 }
+        )
+      }
+    }
 
     // Single DB transaction: receipt + sales + product stock updates + initial payment
     const response = await prisma.$transaction(async (tx) => {
@@ -191,7 +206,7 @@ export async function POST(request: Request) {
           amountPaid: amountReceived,
           amountDue,
           changeGiven,
-          isPartPayment: Boolean(isPartPayment),
+          isPartPayment: storeIsPartPayment,
           isPaid,
           notes: notes?.trim() || null,
           originalReceiptId: linkedOriginalId,
@@ -224,7 +239,7 @@ export async function POST(request: Request) {
             amountPaid: amountReceived,
             changeGiven,
             amountDue,
-            isPartPayment: Boolean(isPartPayment),
+            isPartPayment: storeIsPartPayment,
             quantitySold: item.quantity,
             unitPriceAtSale: unitPrice,
             totalAmount,

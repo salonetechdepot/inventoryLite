@@ -19,7 +19,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -36,15 +35,13 @@ import {
 import {
   fetchWithOfflineCache,
   SALE_RECEIPTS_CACHE_KEY,
-  sendOrQueueMutation,
 } from "@/lib/offline-sync"
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
-import { toast } from "@/hooks/use-toast"
-import { cn } from "@/lib/utils"
+import { CollectPaymentForm } from "@/components/collect-payment-form"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
-import { PAYMENT_METHODS } from "@/lib/payment-methods"
 import { printThermalReceipt } from "@/lib/receipt-print"
+import { cn } from "@/lib/utils"
 
 const fetcher = fetchWithOfflineCache
 
@@ -127,15 +124,25 @@ export default function SalesHistoryPage() {
 }
 
 function SalesHistoryContent() {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const searchParams = useSearchParams()
+  const initialStatus = (searchParams.get("status") as StatusFilter) || "all"
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    initialStatus === "paid" || initialStatus === "unpaid" ? initialStatus : "all"
+  )
   const [activeReceipt, setActiveReceipt] = useState<ApiReceipt | null>(null)
   const { user } = useAuth()
-  const searchParams = useSearchParams()
 
   const { data, error, isLoading, mutate } = useSWR<{ receipts: ApiReceipt[] }>(
     SALE_RECEIPTS_CACHE_KEY,
     fetcher
   )
+
+  useEffect(() => {
+    const status = searchParams.get("status") as StatusFilter | null
+    if (status === "paid" || status === "unpaid" || status === "all") {
+      setStatusFilter(status)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     const receiptId = searchParams.get("receipt")
@@ -191,6 +198,14 @@ function SalesHistoryContent() {
             <p className="text-muted-foreground">
               Tap any receipt to view, reprint, or record a payment.
             </p>
+            {totalOutstanding > 0 && (
+              <Link
+                href="/dashboard/debtors"
+                className="inline-flex text-sm text-primary font-medium mt-1 hover:underline"
+              >
+                Open credit book · NLe {formatCurrency(totalOutstanding)} owed
+              </Link>
+            )}
           </div>
           {isOffline && (
             <Badge
@@ -341,7 +356,9 @@ function SalesHistoryContent() {
                               variant="secondary"
                               className="bg-warning/20 text-warning border-warning/40 h-5"
                             >
-                              Part Payment
+                              {Number(receipt.amount_paid || 0) > 0
+                                ? "Part paid"
+                                : "Credit"}
                             </Badge>
                           )}
                           {String(receipt.id).startsWith("local-") && (
@@ -417,91 +434,16 @@ function ReceiptDetailsDialog({
   onUpdated: (receipt: ApiReceipt) => void
   onMutate: () => void
 }) {
-  const [paymentAmount, setPaymentAmount] = useState("")
-  const [paymentMethod, setPaymentMethod] = useState("cash")
-  const [paymentNote, setPaymentNote] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState("")
-
   const open = Boolean(receipt)
   const router = useRouter()
   const isSaleReceipt = receipt && String(receipt.type).toUpperCase() === "SALE"
   const isReturnReceipt = receipt && String(receipt.type).toUpperCase() === "RETURN"
 
-  const handlePrint = () => {
-    printThermalReceipt()
-  }
-
-  const handleAddPayment = async () => {
-    if (!receipt) return
-    setError("")
-    const amount = Number(paymentAmount)
-    if (!amount || amount <= 0) {
-      setError("Enter an amount greater than zero")
-      return
-    }
-
-    setSubmitting(true)
-    try {
-      const body = {
-        amount,
-        method: paymentMethod || "cash",
-        note: paymentNote.trim() || null,
-      }
-      const result = await sendOrQueueMutation({
-        url: `/api/receipts/${receipt.id}/payments`,
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      })
-
-      if (result.queued) {
-        toast({
-          title: "Payment saved offline",
-          description: "It will sync when you are back online.",
-        })
-        onMutate()
-        setPaymentAmount("")
-        setPaymentNote("")
-        onClose()
-        return
-      }
-
-      const res = result.response
-      if (!res) {
-        setError("Could not reach the server. Try again.")
-        return
-      }
-
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data?.error || "Failed to record payment")
-        return
-      }
-      toast({
-        title: "Payment recorded",
-        description: `NLe ${formatCurrency(Number(data.credited || amount))} added to receipt.`,
-      })
-      setPaymentAmount("")
-      setPaymentNote("")
-      onUpdated({ ...(data.receipt as ApiReceipt), item_count: receipt.item_count })
-    } catch {
-      setError("Could not reach the server. Try again.")
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   return (
     <Dialog
       open={open}
       onOpenChange={(value) => {
-        if (!value) {
-          onClose()
-          setPaymentAmount("")
-          setPaymentNote("")
-          setError("")
-        }
+        if (!value) onClose()
       }}
     >
       <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
@@ -513,91 +455,62 @@ function ReceiptDetailsDialog({
             receipt={receipt}
             businessName={businessName}
             shopLogoUrl={shopLogoUrl}
-            onPrint={handlePrint}
+            onPrint={() => printThermalReceipt()}
             onClose={onClose}
             footerSlot={
               <>
-              {isReturnReceipt && receipt.original_receipt_id && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full print:hidden mb-2"
-                  onClick={() => {
-                    router.push(`/dashboard/sales?receipt=${receipt.original_receipt_id}`)
-                    onClose()
-                  }}
-                >
-                  View original sale{" "}
-                  {formatReceiptLinkLabel(
-                    receipt.original_receipt_id,
-                    receipt.original_receipt?.created_at
-                  )}
-                </Button>
-              )}
-              {isSaleReceipt && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full print:hidden mb-2"
-                  onClick={() => {
-                    router.push(`/dashboard/sell?type=return&fromReceipt=${receipt.id}`)
-                    onClose()
-                  }}
-                >
-                  <Undo2 className="mr-2 size-4" />
-                  Return items from this sale
-                </Button>
-              )}
-              {!receipt.is_paid && (
-                <div className="border rounded-lg p-3 space-y-3 bg-muted/30 print:hidden">
-                  <div>
-                    <p className="text-sm font-semibold">Record a payment</p>
-                    <p className="text-xs text-muted-foreground">
-                      Outstanding: NLe {formatCurrency(receipt.amount_due)}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="Amount"
-                      value={paymentAmount}
-                      onChange={(e) => setPaymentAmount(e.target.value)}
-                      className="h-10"
-                    />
-                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                      <SelectTrigger className="h-10">
-                        <SelectValue placeholder="Payment method" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PAYMENT_METHODS.filter((m) => m.id !== "credit").map((m) => (
-                          <SelectItem key={m.id} value={m.id}>
-                            {m.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Input
-                    type="text"
-                    placeholder="Note (optional)"
-                    value={paymentNote}
-                    onChange={(e) => setPaymentNote(e.target.value)}
-                    className="h-10"
-                  />
-                  {error && (
-                    <p className="text-sm text-destructive">{error}</p>
-                  )}
+                {isReturnReceipt && receipt.original_receipt_id && (
                   <Button
-                    onClick={handleAddPayment}
-                    disabled={submitting}
-                    className="w-full h-11"
+                    type="button"
+                    variant="outline"
+                    className="w-full print:hidden mb-2"
+                    onClick={() => {
+                      router.push(`/dashboard/sales?receipt=${receipt.original_receipt_id}`)
+                      onClose()
+                    }}
                   >
-                    {submitting ? "Saving..." : "Record payment"}
+                    View original sale{" "}
+                    {formatReceiptLinkLabel(
+                      receipt.original_receipt_id,
+                      receipt.original_receipt?.created_at
+                    )}
                   </Button>
-                </div>
-              )}
+                )}
+                {isSaleReceipt && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full print:hidden mb-2"
+                    onClick={() => {
+                      router.push(`/dashboard/sell?type=return&fromReceipt=${receipt.id}`)
+                      onClose()
+                    }}
+                  >
+                    <Undo2 className="mr-2 size-4" />
+                    Return items from this sale
+                  </Button>
+                )}
+                {!receipt.is_paid && (
+                  <CollectPaymentForm
+                    receiptId={receipt.id}
+                    amountDue={Number(receipt.amount_due || 0)}
+                    onQueued={() => {
+                      onMutate()
+                      onClose()
+                    }}
+                    onRecorded={({ receipt: updated, queued }) => {
+                      if (queued) {
+                        onMutate()
+                        onClose()
+                        return
+                      }
+                      onUpdated({
+                        ...(updated as unknown as ApiReceipt),
+                        item_count: receipt.item_count,
+                      })
+                    }}
+                  />
+                )}
               </>
             }
           />

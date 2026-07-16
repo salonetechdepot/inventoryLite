@@ -6,6 +6,7 @@ export const DASHBOARD_OFFLINE_ROUTES = [
   "/dashboard/sell",
   "/dashboard/sales",
   "/dashboard/returns",
+  "/dashboard/debtors",
   "/dashboard/categories",
   "/dashboard/analytics",
   "/dashboard/sync-conflicts",
@@ -23,6 +24,7 @@ export function isDashboardOfflinePath(pathname: string): boolean {
     pathname.startsWith("/dashboard/sell") ||
     pathname.startsWith("/dashboard/sales") ||
     pathname.startsWith("/dashboard/returns") ||
+    pathname.startsWith("/dashboard/debtors") ||
     pathname.startsWith("/dashboard/categories") ||
     pathname.startsWith("/dashboard/analytics") ||
     pathname.startsWith("/dashboard/sync-conflicts")

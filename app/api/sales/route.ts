@@ -95,31 +95,46 @@ export async function POST(request: Request) {
     const totalAmount = quantity * unitPrice
     const safeDiscount = Math.max(0, Number(discountAmount || 0))
     const netAmount = Math.max(0, totalAmount - safeDiscount)
-    const {
-      amountReceived,
-      changeGiven,
-      amountDue,
-    } = resolveCheckoutPayment({
-      netAmount,
-      amountTendered: Number(amountPaid || 0),
-      isPartPayment: Boolean(isPartPayment),
-    })
+  const {
+    amountReceived,
+    changeGiven,
+    amountDue,
+  } = resolveCheckoutPayment({
+    netAmount,
+    amountTendered: Number(amountPaid || 0),
+    isPartPayment: Boolean(isPartPayment),
+  })
+  const storeIsPartPayment = amountDue > 0
 
-    // Record sale
-    const [saleResult] = await prisma.$transaction([
-      prisma.sale.create({
-        data: {
-          tenantId: session.tenantId,
-          productId,
-          type: 'SALE',
-          productName,
-          customerName: customerName?.trim() || null,
-          customerPhone: customerPhone?.trim() || null,
-          discountAmount: safeDiscount,
-          amountPaid: amountReceived,
-          amountDue,
-          changeGiven,
-          isPartPayment: Boolean(isPartPayment),
+  if (amountDue > 0) {
+    const name = typeof customerName === 'string' ? customerName.trim() : ''
+    const phone = typeof customerPhone === 'string' ? customerPhone.trim() : ''
+    if (!name && !phone) {
+      return NextResponse.json(
+        {
+          error:
+            'Customer name or phone is required for credit / part payment so you can track who owes the balance.',
+        },
+        { status: 400 }
+      )
+    }
+  }
+
+  // Record sale
+  const [saleResult] = await prisma.$transaction([
+    prisma.sale.create({
+      data: {
+        tenantId: session.tenantId,
+        productId,
+        type: 'SALE',
+        productName,
+        customerName: customerName?.trim() || null,
+        customerPhone: customerPhone?.trim() || null,
+        discountAmount: safeDiscount,
+        amountPaid: amountReceived,
+        amountDue,
+        changeGiven,
+        isPartPayment: storeIsPartPayment,
           quantitySold: quantity,
           unitPriceAtSale: unitPrice,
           totalAmount

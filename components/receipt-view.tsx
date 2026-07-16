@@ -276,9 +276,9 @@ export function ReceiptView({
           <span className="hidden print:inline print:font-semibold">
             {receipt.is_paid
               ? "Paid"
-              : receipt.is_part_payment
-                ? "Part Payment"
-                : "Unpaid"}
+              : Number(receipt.amount_paid || 0) > 0
+                ? "Part paid"
+                : "Credit"}
           </span>
           <span className="print:hidden">
             {receipt.is_paid ? (
@@ -287,7 +287,7 @@ export function ReceiptView({
               </Badge>
             ) : (
               <Badge variant="secondary" className="bg-warning/20 text-warning border-warning/40">
-                {receipt.is_part_payment ? "Part Payment" : "Unpaid"}
+                {Number(receipt.amount_paid || 0) > 0 ? "Part paid" : "Credit"}
               </Badge>
             )}
           </span>

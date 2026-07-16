@@ -12,6 +12,7 @@ import {
   ArrowRight,
   Undo2,
   WifiOff,
+  BookUser,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,9 +22,11 @@ import { useAuth } from "@/hooks/use-auth"
 import { cn } from "@/lib/utils"
 import {
   DASHBOARD_STATS_CACHE_KEY,
+  SALE_RECEIPTS_CACHE_KEY,
   fetchWithOfflineCache,
   getCacheUpdatedAt,
 } from "@/lib/offline-sync"
+import { sumOutstanding } from "@/lib/debtors"
 
 const fetcher = fetchWithOfflineCache
 
@@ -75,6 +78,12 @@ export default function DashboardPage() {
     fetcher,
     { refreshInterval: 30000 }
   )
+
+  const { data: salesData } = useSWR<{ receipts: Array<{ amount_due: number; is_paid: boolean; type?: string }> }>(
+    SALE_RECEIPTS_CACHE_KEY,
+    fetcher
+  )
+  const outstandingCredit = sumOutstanding(salesData?.receipts || [])
 
   const isOffline = typeof navigator !== "undefined" && !navigator.onLine
   const showStaleBanner = Boolean(data) && isOffline
@@ -137,6 +146,31 @@ export default function DashboardPage() {
           </Link>
         </Button>
       </div>
+
+      {outstandingCredit > 0 && (
+        <Card className="mb-6 border-warning/40 bg-warning/10">
+          <CardContent className="p-4">
+            <Link href="/dashboard/debtors" className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="size-10 rounded-lg bg-warning/20 flex items-center justify-center shrink-0">
+                  <BookUser className="size-5 text-warning-foreground" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold">Credit outstanding</p>
+                  <p className="text-sm text-muted-foreground truncate">
+                    NLe{" "}
+                    {new Intl.NumberFormat("en-SL", {
+                      maximumFractionDigits: 0,
+                    }).format(outstandingCredit)}{" "}
+                    owed by customers
+                  </p>
+                </div>
+              </div>
+              <ArrowRight className="size-5 shrink-0 text-muted-foreground" />
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Low Stock Alert */}
       {!isLoading && lowStockProducts.length > 0 && (

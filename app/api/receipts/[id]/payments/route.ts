@@ -50,6 +50,9 @@ export async function POST(
 
       // Cap the credited amount at the outstanding balance.
       const credited = Math.min(amountValue, currentDue)
+      if (credited <= 0) {
+        return { notAllowed: true as const, reason: 'No outstanding balance on this receipt' }
+      }
       const overflow = amountValue - credited
       const newPaid = currentPaid + credited
       const newDue = Math.max(0, currentDue - credited)
@@ -73,7 +76,7 @@ export async function POST(
           amountDue: newDue,
           changeGiven: newChange,
           isPaid: nowPaid,
-          isPartPayment: nowPaid ? false : receipt.isPartPayment,
+          isPartPayment: nowPaid ? false : true,
           updatedAt: new Date(),
         },
         include: {
@@ -111,7 +114,7 @@ export async function POST(
           amountPaid: newPaid,
           amountDue: newDue,
           changeGiven: newChange,
-          isPartPayment: nowPaid ? false : receipt.isPartPayment,
+          isPartPayment: nowPaid ? false : true,
         },
       })
 

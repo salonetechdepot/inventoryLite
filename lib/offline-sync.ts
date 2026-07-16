@@ -512,6 +512,7 @@ async function buildOptimisticBatchReceiptAsync(
     changeGiven,
     amountDue,
     isPaid,
+    isPartPayment: storeIsPartPayment,
   } = resolveCheckoutPayment({
     netAmount,
     amountTendered: Number(payload.amountPaid ?? 0),
@@ -566,7 +567,7 @@ async function buildOptimisticBatchReceiptAsync(
     amount_paid: amountReceived,
     amount_due: amountDue,
     change_given: changeGiven,
-    is_part_payment: isPartPayment,
+    is_part_payment: storeIsPartPayment,
     is_paid: isPaid,
     notes: null,
     created_at: createdAt,
@@ -649,10 +650,10 @@ function formatReceiptFromBatchResponse(data: {
 }
 
 async function applyBatchReceiptCacheResolution(
-  mutation: { url: string; method: string; body?: unknown },
+  mutation: { url: string; method: string; body?: unknown; tempId?: string },
   response: Response
-) {
-  if (mutation.url !== "/api/sales/batch" || mutation.method !== "POST") return
+): Promise<Record<string, string> | null> {
+  if (mutation.url !== "/api/sales/batch" || mutation.method !== "POST") return null
   let body: Record<string, unknown> = {}
   try {
     body =
@@ -660,16 +661,20 @@ async function applyBatchReceiptCacheResolution(
         ? (mutation.body as Record<string, unknown>)
         : JSON.parse(String(mutation.body ?? "{}"))
   } catch {
-    return
+    return null
   }
-  const offlineReceiptId = body._offlineReceiptId ? String(body._offlineReceiptId) : undefined
+  const offlineReceiptId = body._offlineReceiptId
+    ? String(body._offlineReceiptId)
+    : mutation.tempId
+      ? String(mutation.tempId)
+      : undefined
   let data: { receipt?: Record<string, unknown>; sales?: Array<Record<string, unknown>>; type?: string }
   try {
     data = (await response.clone().json()) as typeof data
   } catch {
-    return
+    return null
   }
-  if (!data?.receipt) return
+  if (!data?.receipt) return null
   const formatted = formatReceiptFromBatchResponse({
     receipt: data.receipt,
     sales: Array.isArray(data.sales) ? data.sales : [],
@@ -678,6 +683,12 @@ async function applyBatchReceiptCacheResolution(
     String(data.receipt.type ?? data.type ?? "").toUpperCase() === "RETURN" || data.type === "return"
   const cacheKey = isReturn ? RETURN_RECEIPTS_CACHE_KEY : SALE_RECEIPTS_CACHE_KEY
   await upsertReceiptInCache(cacheKey, formatted, offlineReceiptId)
+
+  const realId = String(formatted.id ?? "")
+  if (offlineReceiptId && realId && offlineReceiptId !== realId) {
+    return { [offlineReceiptId]: realId }
+  }
+  return null
 }
 
 async function applyPaymentCacheResolution(mutation: QueuedMutation, response: Response) {
@@ -742,7 +753,7 @@ async function applyOptimisticPaymentMutation(input: {
         amount_due: newDue,
         change_given: newChange,
         is_paid: nowPaid,
-        is_part_payment: nowPaid ? false : receipt.is_part_payment,
+        is_part_payment: nowPaid ? false : true,
         updated_at: createdAt,
         payments: [...(receipt.payments ?? []), newPayment],
         _isLocalOnly: true,
@@ -865,6 +876,11 @@ function remapIdInUrl(url: string, idMap: Record<string, string>) {
   for (const [tempId, realId] of Object.entries(idMap)) {
     mapped = mapped.replace(`/api/products/${tempId}/adjust`, `/api/products/${realId}/adjust`)
     mapped = mapped.replace(`/api/products/${tempId}`, `/api/products/${realId}`)
+    mapped = mapped.replace(
+      `/api/receipts/${tempId}/payments`,
+      `/api/receipts/${realId}/payments`
+    )
+    mapped = mapped.replace(`/api/receipts/${tempId}`, `/api/receipts/${realId}`)
   }
   return mapped
 }
@@ -1329,8 +1345,12 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
 
       if (res.ok || shouldTreatAsSuccess(mutation, res.status)) {
         await deleteFromStore(QUEUE_STORE, mutation.id)
-        await applyBatchReceiptCacheResolution(mutation, res)
-        await applyPaymentCacheResolution(mutation, res)
+        const receiptMap = await applyBatchReceiptCacheResolution(mutation, res)
+        if (receiptMap) Object.assign(tempIdMap, receiptMap)
+        await applyPaymentCacheResolution(
+          { ...mutation, url: mappedUrl },
+          res
+        )
         const createdMap = await applyCreateSyncResolution(mutation, res)
         if (createdMap) Object.assign(tempIdMap, createdMap)
         synced += 1

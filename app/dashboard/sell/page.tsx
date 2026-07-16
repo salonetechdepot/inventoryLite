@@ -72,7 +72,7 @@ import {
 } from "@/lib/payment-methods"
 import { printThermalReceipt } from "@/lib/receipt-print"
 import { playScanBeep } from "@/lib/scan-feedback"
-import { resolveCheckoutPayment } from "@/lib/checkout-payment"
+import { resolveCheckoutPayment, shouldUsePartPayment } from "@/lib/checkout-payment"
 import { usePosSettings } from "@/hooks/use-pos-settings"
 import { useHardwareScanner } from "@/hooks/use-hardware-scanner"
 import { useWakeLock } from "@/hooks/use-wake-lock"
@@ -383,27 +383,44 @@ function SellPageContent() {
   const handleCheckout = async () => {
     if (cart.length === 0) return
 
+    let usePartPayment = isPartPayment
     if (transactionType === "sale") {
-      if (!isPartPayment && amountTendered < netTotal) {
+      if (!usePartPayment && amountTendered < netTotal) {
         setError(
-          "Amount paid is less than total. Enable Part Payment to record a balance owed."
+          "Cash tendered is less than total. Enable Credit / part payment to record a balance owed."
         )
         return
       }
-      if (isPartPayment && amountTendered >= netTotal) {
+      usePartPayment = shouldUsePartPayment(usePartPayment, amountTendered, netTotal)
+      if (isPartPayment && !usePartPayment) {
         setIsPartPayment(false)
+      }
+      if (usePartPayment) {
+        if (!customerName.trim() && !customerPhone.trim()) {
+          setShowCustomerFields(true)
+          setError(
+            "Add customer name or phone for credit sales so you can track who owes you."
+          )
+          return
+        }
       }
     }
 
     setLoading(true)
     setError("")
 
+    const checkoutPaymentForSale = resolveCheckoutPayment({
+      netAmount: netTotal,
+      amountTendered,
+      isPartPayment: usePartPayment,
+    })
+
     const resolvedPaymentMethod =
       transactionType === "return"
         ? "cash"
         : amountTendered > 0
           ? paymentMethod
-          : isPartPayment
+          : usePartPayment
             ? "credit"
             : paymentMethod
 
@@ -422,7 +439,7 @@ function SellPageContent() {
         ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
         discountAmount: discountValue,
         amountPaid: amountTendered,
-        isPartPayment,
+        isPartPayment: usePartPayment,
         paymentMethod: resolvedPaymentMethod,
         ...(originalReceiptId && transactionType === "return"
           ? { originalReceiptId }
@@ -502,11 +519,11 @@ function SellPageContent() {
           subtotal: cartTotal,
           discount_amount: discountValue,
           net_amount: netTotal,
-          amount_paid: amountReceived,
-          amount_due: amountDue,
-          change_given: changeGiven,
-          is_part_payment: isPartPayment,
-          is_paid: amountDue <= 0,
+          amount_paid: checkoutPaymentForSale.amountReceived,
+          amount_due: checkoutPaymentForSale.amountDue,
+          change_given: checkoutPaymentForSale.changeGiven,
+          is_part_payment: checkoutPaymentForSale.isPartPayment,
+          is_paid: checkoutPaymentForSale.isPaid,
           created_at: new Date().toISOString(),
           sales: cart.map((item, idx) => ({
             id: `${idx}`,
@@ -518,11 +535,11 @@ function SellPageContent() {
             return_disposition: item.returnDisposition,
           })),
           payments:
-            amountReceived > 0
+            checkoutPaymentForSale.amountReceived > 0
               ? [
                   {
                     id: "initial",
-                    amount: amountReceived,
+                    amount: checkoutPaymentForSale.amountReceived,
                     method: resolvedPaymentMethod,
                     note: "initial payment",
                     created_at: new Date().toISOString(),
@@ -964,7 +981,11 @@ function SellPageContent() {
                 onClick={() => setShowCustomerFields((v) => !v)}
                 className="w-full flex items-center justify-between p-3 text-sm font-semibold hover:bg-muted/50"
               >
-                <span>Customer details (optional)</span>
+                <span>
+                  {isPartPayment
+                    ? "Customer details (required for credit)"
+                    : "Customer details (optional)"}
+                </span>
                 {showCustomerFields ? (
                   <ChevronUp className="size-4" />
                 ) : (
@@ -987,6 +1008,11 @@ function SellPageContent() {
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     className="h-11"
                   />
+                  {isPartPayment && (
+                    <p className="text-xs text-muted-foreground">
+                      Name or phone is required so this balance appears in your credit book.
+                    </p>
+                  )}
                 </div>
               )}
             </section>
@@ -1043,12 +1069,14 @@ function SellPageContent() {
                 </Button>
               )}
 
+              {transactionType === "sale" && (
               <Button
                 type="button"
                 variant={isPartPayment ? "default" : "outline"}
                 onClick={() => {
                   setIsPartPayment((prev) => {
                     const next = !prev
+                    if (next) setShowCustomerFields(true)
                     setPaymentMethod(
                       initialPaymentMethodForCheckout(next, amountTendered)
                     )
@@ -1057,8 +1085,11 @@ function SellPageContent() {
                 }}
                 className="w-full h-11"
               >
-                {isPartPayment ? "✓ Part payment enabled" : "Enable part payment"}
+                {isPartPayment
+                  ? "✓ Credit / part payment enabled"
+                  : "Enable credit / part payment"}
               </Button>
+              )}
 
               {transactionType === "sale" && amountTendered > 0 && (
                 <div className="space-y-2">
@@ -1085,9 +1116,18 @@ function SellPageContent() {
 
               {transactionType === "sale" && isPartPayment && amountTendered <= 0 && (
                 <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
-                  No payment collected — balance will be recorded as credit owed.
+                  Full credit sale — customer owes {formatPrice(netTotal)}. Add their name or
+                  phone above.
                 </div>
               )}
+              {transactionType === "sale" &&
+                isPartPayment &&
+                amountTendered > 0 &&
+                amountTendered < netTotal && (
+                  <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground">
+                    Partial payment — balance of {formatPrice(amountDue)} will be owed.
+                  </div>
+                )}
 
               {/* Summary */}
               <div className="rounded-lg border divide-y">

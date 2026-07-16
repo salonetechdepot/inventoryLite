@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Paintbrush,
   AlertTriangle,
+  BookUser,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -173,6 +174,22 @@ export default function AccountPage() {
               <Separator />
             </>
           )}
+          <Link
+            href="/dashboard/debtors"
+            className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"
+          >
+            <div className="size-10 rounded-lg bg-warning/10 flex items-center justify-center shrink-0">
+              <BookUser className="size-5 text-warning" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium">Credit book</h3>
+              <p className="text-sm text-muted-foreground">
+                Customers who owe balances
+              </p>
+            </div>
+            <ChevronRight className="size-5 text-muted-foreground shrink-0" />
+          </Link>
+          <Separator />
           <Link
             href="/dashboard/analytics"
             className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors"
