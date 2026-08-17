@@ -9,7 +9,7 @@ import {
   getConflictCount,
   getQueuedMutationCount,
   processOfflineQueue,
-  refreshAllOfflineData,
+  runDeltaSync,
 } from "@/lib/offline-sync"
 
 async function refreshCounts(
@@ -53,7 +53,7 @@ export function OfflineSync() {
           title: "Sync complete",
           description: `${result.synced} queued change(s) synced.`,
         })
-        await refreshAllOfflineData({ updateSwr: true, warmRoutes: false })
+        await runDeltaSync()
         return
       }
 

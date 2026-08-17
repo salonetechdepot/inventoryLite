@@ -10,6 +10,7 @@ import {
 } from "@/lib/roarbyte-api"
 import { normalizeLoginIdentity, normalizeOtpCode } from "@/lib/login-identity"
 import { hasSessionExpiry, isSessionExpired } from "@/lib/session-expiry"
+import { runDeltaSync } from "@/lib/offline-sync"
 
 export type AuthUser = {
   id: string
@@ -153,6 +154,7 @@ export const useAuthStore = create<AuthState>()(
         if (typeof data.sessionExpiresAt === "string") {
           set({ sessionExpiresAt: data.sessionExpiresAt })
         }
+        void runDeltaSync({ full: true })
         return data.user as AuthUser
       },
 

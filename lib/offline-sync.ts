@@ -5,6 +5,14 @@ import { restockQuantityForLine, type ReturnDisposition } from "@/lib/return-inv
 import { isSessionExpired, shouldClearStoredSession } from "@/lib/session-expiry"
 import { warmDashboardRscCache } from "@/lib/offline-navigation"
 import { resolveCheckoutPayment } from "@/lib/checkout-payment"
+import type { SyncCursorState, SyncPayload } from "@/lib/sync-types"
+import {
+  capReceiptHistory,
+  mergeProductSync,
+  mergeReceiptSync,
+  RECEIPT_HISTORY_CAP,
+  type ReceiptIncoming,
+} from "@/lib/sync-merge"
 
 const DB_NAME = "stockeasy-offline-db"
 const DB_VERSION = 1
@@ -21,7 +29,7 @@ export const DASHBOARD_STATS_CACHE_KEY = "/api/dashboard/stats"
 export const ANALYTICS_CACHE_KEY = "/api/analytics"
 export const SESSION_CACHE_KEY = "/api/auth/session"
 
-/** All API keys refreshed in the background while online (IndexedDB + SWR). */
+/** Keys kept warm via delta sync (analytics loads on demand when opening Reports). */
 export const OFFLINE_DATA_CACHE_KEYS = [
   SESSION_CACHE_KEY,
   PRODUCTS_CACHE_KEY,
@@ -29,11 +37,12 @@ export const OFFLINE_DATA_CACHE_KEYS = [
   DASHBOARD_STATS_CACHE_KEY,
   SALE_RECEIPTS_CACHE_KEY,
   RETURN_RECEIPTS_CACHE_KEY,
-  ANALYTICS_CACHE_KEY,
 ] as const
 
-/** How often to refresh cached data while the app is online and visible. */
-export const OFFLINE_BACKGROUND_REFRESH_MS = 30_000
+/** Slow heartbeat — event-driven sync handles most updates. */
+export const OFFLINE_BACKGROUND_REFRESH_MS = 180_000
+
+export const SYNC_CURSOR_CACHE_KEY = "__sync_cursor__"
 
 const SESSION_LOCAL_KEY = "stockeasy-session-user-v1"
 
@@ -187,6 +196,8 @@ interface ProductShape {
   has_specifications?: boolean
   cost_price?: number | null
   specifications?: Record<string, string> | null
+  created_at?: string | Date | null
+  updated_at?: string | Date | null
   _isLocalOnly?: boolean
 }
 
@@ -350,6 +361,12 @@ interface CachedReceipt {
   is_part_payment: boolean
   is_paid: boolean
   notes: string | null
+  original_receipt_id?: string | null
+  original_receipt?: {
+    id: string
+    created_at: string | Date
+    net_amount: number
+  } | null
   created_at: string | Date
   updated_at?: string | Date
   item_count: number
@@ -390,14 +407,11 @@ function mergeReceiptsPreservingLocal(serverData: unknown, existingData: unknown
   const existing = (existingData as { receipts?: CachedReceipt[] })?.receipts
   const serverReceipts = Array.isArray(incoming) ? incoming : []
   const current = Array.isArray(existing) ? existing : []
-  const localOnly = current.filter((r) => r?._isLocalOnly)
-  const merged = [...localOnly]
-  for (const r of serverReceipts) {
-    if (!merged.some((x) => x.id === r.id)) {
-      merged.push({ ...r, _isLocalOnly: false })
-    }
-  }
-  return { receipts: merged }
+  const merged = mergeReceiptSync(
+    current,
+    serverReceipts as unknown as ReceiptIncoming[]
+  )
+  return { receipts: capReceiptHistory(merged, RECEIPT_HISTORY_CAP) }
 }
 
 function mergeReturnReceiptsPreservingLocal(serverData: unknown, existingData: unknown) {
@@ -938,17 +952,13 @@ function mergeProductsPreservingLocal(serverData: unknown, existingData: unknown
   const existing = (existingData as { products?: ProductShape[] })?.products
   const serverProducts = Array.isArray(incoming) ? incoming : []
   const currentProducts = Array.isArray(existing) ? existing : []
-
-  const localOnly = currentProducts.filter((product) => product?._isLocalOnly)
-  const merged = [...localOnly]
-
-  for (const serverProduct of serverProducts) {
-    if (!merged.some((product) => product.id === serverProduct.id)) {
-      merged.push(serverProduct)
-    }
+  return {
+    products: mergeProductSync(
+      currentProducts,
+      serverProducts as import("@/lib/sync-types").SyncProduct[],
+      true
+    ),
   }
-
-  return { products: merged }
 }
 
 export async function cacheData<T>(key: string, data: T) {
@@ -1080,61 +1090,190 @@ export type OfflineCacheRefreshResult = {
   productDetails: number
 }
 
-async function prefetchProductDetailCaches(updateSwr: boolean): Promise<number> {
-  const data = await getCachedData<{ products: Array<{ id: string }> }>(PRODUCTS_CACHE_KEY)
-  const ids = (data?.products ?? []).map((p) => p.id).filter(Boolean)
-  if (ids.length === 0) return 0
-
-  let count = 0
-  await Promise.allSettled(
-    ids.slice(0, 300).map(async (id) => {
-      const key = `/api/products/${id}`
-      const productData = await fetchWithOfflineCache<{ product: unknown }>(key)
-      if (updateSwr) {
-        await mutate(key, productData, { revalidate: false })
-      }
-      count += 1
-    })
-  )
-  return count
+export type DeltaSyncResult = {
+  ok: boolean
+  full: boolean
+  products: number
+  sale_receipts: number
+  return_receipts: number
+  reason?: string
 }
 
-/** Fetch all dashboard data from the server, store in IndexedDB, and update SWR. */
+let activeDeltaSync: Promise<DeltaSyncResult> | null = null
+let deltaSyncDebounce: ReturnType<typeof setTimeout> | null = null
+
+async function loadSyncCursor(tenantId: string): Promise<SyncCursorState | null> {
+  const state = await getCachedData<SyncCursorState>(SYNC_CURSOR_CACHE_KEY)
+  if (!state || state.tenantId !== tenantId) return null
+  return state
+}
+
+async function saveSyncCursor(state: SyncCursorState) {
+  await cacheData(SYNC_CURSOR_CACHE_KEY, state)
+}
+
+function tenantIdFromSessionUser(user: unknown): string | null {
+  if (!user || typeof user !== "object") return null
+  const id = (user as { tenant_id?: string }).tenant_id
+  return typeof id === "string" && id.trim() ? id.trim() : null
+}
+
+/** Debounced delta sync after local mutations — keeps offline cache fresh before disconnect. */
+export function scheduleDeltaSync(_reason?: string) {
+  if (!isBrowser() || !navigator.onLine) return
+  if (deltaSyncDebounce) clearTimeout(deltaSyncDebounce)
+  deltaSyncDebounce = setTimeout(() => {
+    deltaSyncDebounce = null
+    void runDeltaSync()
+  }, 400)
+}
+
+/** Pull only what changed since the last cursor (full bootstrap when needed). */
+export async function runDeltaSync(options?: {
+  full?: boolean
+}): Promise<DeltaSyncResult> {
+  if (!isBrowser() || !navigator.onLine) {
+    return {
+      ok: false,
+      full: false,
+      products: 0,
+      sale_receipts: 0,
+      return_receipts: 0,
+      reason: "offline",
+    }
+  }
+  if (activeDeltaSync) return activeDeltaSync
+  activeDeltaSync = performDeltaSync(options).finally(() => {
+    activeDeltaSync = null
+  })
+  return activeDeltaSync
+}
+
+async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSyncResult> {
+  const empty = {
+    ok: false,
+    full: false,
+    products: 0,
+    sale_receipts: 0,
+    return_receipts: 0,
+  }
+
+  try {
+    await fetchWithOfflineCache<SessionBackup>(SESSION_CACHE_KEY)
+    const session =
+      (await getCachedData<SessionBackup>(SESSION_CACHE_KEY)) ??
+      loadSessionBackup()
+    const tenantId = tenantIdFromSessionUser(session?.user)
+    if (!tenantId) {
+      return { ...empty, reason: "no_session" }
+    }
+
+    const cursorState = await loadSyncCursor(tenantId)
+    const forceFull = options?.full === true
+    const syncUrl =
+      forceFull || !cursorState
+        ? "/api/sync?full=1"
+        : `/api/sync?since=${encodeURIComponent(cursorState.cursor)}`
+
+    const res = await fetch(syncUrl, { credentials: "same-origin" })
+    if (!res.ok) {
+      return { ...empty, reason: `sync_${res.status}` }
+    }
+
+    const payload = (await res.json()) as SyncPayload
+
+    const existingProducts =
+      (await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY))
+        ?.products ?? []
+    const mergedProducts = mergeProductSync(
+      existingProducts,
+      payload.products,
+      payload.full
+    )
+    await cacheData(PRODUCTS_CACHE_KEY, { products: mergedProducts })
+    await mutate(PRODUCTS_CACHE_KEY, { products: mergedProducts }, { revalidate: false })
+
+    await cacheData(CATEGORIES_CACHE_KEY, { categories: payload.categories })
+    await mutate(
+      CATEGORIES_CACHE_KEY,
+      { categories: payload.categories },
+      { revalidate: false }
+    )
+
+    const existingSales =
+      (await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY))
+        ?.receipts ?? []
+    let mergedSales = mergeReceiptSync(existingSales, payload.sale_receipts)
+    if (payload.full) {
+      mergedSales = capReceiptHistory(mergedSales, RECEIPT_HISTORY_CAP)
+    }
+    await cacheData(SALE_RECEIPTS_CACHE_KEY, { receipts: mergedSales })
+    await mutate(SALE_RECEIPTS_CACHE_KEY, { receipts: mergedSales }, { revalidate: false })
+
+    const existingReturns =
+      (await getCachedData<{ receipts: CachedReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY))
+        ?.receipts ?? []
+    let mergedReturns = mergeReceiptSync(existingReturns, payload.return_receipts)
+    if (payload.full) {
+      mergedReturns = capReceiptHistory(mergedReturns, RECEIPT_HISTORY_CAP)
+    }
+    await cacheData(RETURN_RECEIPTS_CACHE_KEY, { receipts: mergedReturns })
+    await mutate(
+      RETURN_RECEIPTS_CACHE_KEY,
+      { receipts: mergedReturns },
+      { revalidate: false }
+    )
+
+    await cacheData(DASHBOARD_STATS_CACHE_KEY, payload.stats)
+    await mutate(DASHBOARD_STATS_CACHE_KEY, payload.stats, { revalidate: false })
+
+    await saveSyncCursor({
+      tenantId,
+      cursor: payload.cursor,
+      lastFullSyncAt: payload.full
+        ? payload.cursor
+        : cursorState?.lastFullSyncAt ?? payload.cursor,
+    })
+
+    if (isBrowser()) {
+      window.dispatchEvent(
+        new CustomEvent(OFFLINE_CACHE_REFRESHED_EVENT, {
+          detail: {
+            refreshed: OFFLINE_DATA_CACHE_KEYS.length,
+            failed: 0,
+            productDetails: 0,
+            full: payload.full,
+            delta: !payload.full,
+          },
+        })
+      )
+    }
+
+    return {
+      ok: true,
+      full: payload.full,
+      products: payload.counts.products,
+      sale_receipts: payload.counts.sale_receipts,
+      return_receipts: payload.counts.return_receipts,
+    }
+  } catch {
+    return { ...empty, reason: "sync_failed" }
+  }
+}
+
+/** @deprecated Prefer runDeltaSync — kept for callers that expect this shape. */
 export async function refreshAllOfflineData(options?: {
   updateSwr?: boolean
   warmRoutes?: boolean
+  full?: boolean
 }): Promise<OfflineCacheRefreshResult> {
   if (!isBrowser() || !navigator.onLine) {
     return { refreshed: 0, failed: 0, productDetails: 0 }
   }
 
-  const updateSwr = options?.updateSwr !== false
-  const warmRoutes = options?.warmRoutes !== false
-  let refreshed = 0
-  let failed = 0
+  const result = await runDeltaSync({ full: options?.full })
 
-  await Promise.allSettled(
-    OFFLINE_DATA_CACHE_KEYS.map(async (key) => {
-      try {
-        const data = await fetchWithOfflineCache(key)
-        if (updateSwr) {
-          await mutate(key, data, { revalidate: false })
-        }
-        refreshed += 1
-      } catch {
-        failed += 1
-      }
-    })
-  )
-
-  let productDetails = 0
-  try {
-    productDetails = await prefetchProductDetailCaches(updateSwr)
-  } catch {
-    // Best-effort — list pages still work from products cache.
-  }
-
-  if (warmRoutes) {
+  if (options?.warmRoutes !== false) {
     try {
       await warmDashboardRscCache()
     } catch {
@@ -1142,15 +1281,11 @@ export async function refreshAllOfflineData(options?: {
     }
   }
 
-  if (isBrowser()) {
-    window.dispatchEvent(
-      new CustomEvent(OFFLINE_CACHE_REFRESHED_EVENT, {
-        detail: { refreshed, failed, productDetails },
-      })
-    )
+  return {
+    refreshed: result.ok ? OFFLINE_DATA_CACHE_KEYS.length : 0,
+    failed: result.ok ? 0 : 1,
+    productDetails: 0,
   }
-
-  return { refreshed, failed, productDetails }
 }
 
 function notifySyncComplete(detail: { synced: number; failed: number; conflicts: number }) {
@@ -1307,6 +1442,8 @@ export async function sendOrQueueMutation(input: {
       )
     }
 
+    scheduleDeltaSync("mutation")
+
     return { queued: false as const, response }
   } catch {
     await enqueueMutation({ ...input, tempId: optimistic.tempId })
@@ -1398,6 +1535,7 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
   const result = { synced, failed, conflicts, lastError }
   if (synced > 0) {
     notifySyncComplete(result)
+    await runDeltaSync()
   }
   return result
 }

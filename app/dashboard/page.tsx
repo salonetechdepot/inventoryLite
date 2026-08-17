@@ -76,8 +76,7 @@ export default function DashboardPage() {
 
   const { data, isLoading } = useSWR<{ stats: DashboardStats; lowStockProducts: LowStockProduct[] }>(
     DASHBOARD_STATS_CACHE_KEY,
-    fetcher,
-    { refreshInterval: 30000 }
+    fetcher
   )
 
   const { data: salesData } = useSWR<{ receipts: Array<{ amount_due: number; is_paid: boolean; type?: string }> }>(

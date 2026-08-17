@@ -3,14 +3,14 @@
 import { useEffect, useRef } from "react"
 import {
   OFFLINE_BACKGROUND_REFRESH_MS,
-  refreshAllOfflineData,
+  runDeltaSync,
 } from "@/lib/offline-sync"
 import { prefetchDashboardRoutes } from "@/lib/offline-navigation"
 import { useRouter } from "next/navigation"
 
 /**
- * While online, periodically refresh all cached API data and route shells
- * so offline mode has recent data without visiting every page.
+ * Event-driven delta sync with a slow heartbeat fallback.
+ * Keeps offline cache fresh without polling the full database every 30s.
  */
 export function BackgroundCacheRefresh() {
   const router = useRouter()
@@ -24,7 +24,7 @@ export function BackgroundCacheRefresh() {
       busyRef.current = true
       try {
         prefetchDashboardRoutes(router.prefetch.bind(router))
-        await refreshAllOfflineData({ updateSwr: true, warmRoutes: true })
+        await runDeltaSync()
       } finally {
         busyRef.current = false
       }
@@ -43,7 +43,7 @@ export function BackgroundCacheRefresh() {
     }
 
     const onOnline = () => {
-      void runRefresh()
+      void runDeltaSync({ full: false })
     }
 
     document.addEventListener("visibilitychange", onVisible)
