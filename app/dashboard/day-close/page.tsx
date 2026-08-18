@@ -8,6 +8,7 @@ import {
   Banknote,
   CheckCircle2,
   History,
+  WifiOff,
   Wallet,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,45 +22,15 @@ import {
   formatBusinessDateLabel,
   getBusinessDateKey,
   roundMoney,
+  type MethodTotals,
 } from "@/lib/day-close"
+import {
+  fetchDayClose,
+  type DayClosePayload,
+} from "@/lib/day-close-client"
+import { isBrowserOffline } from "@/lib/offline-navigation"
 import { paymentMethodLabel } from "@/lib/payment-methods"
 import { cn } from "@/lib/utils"
-
-type MethodTotals = Record<string, number>
-
-type DayCloseRecord = {
-  id: string
-  business_date: string
-  business_date_label: string
-  expected_by_method: MethodTotals
-  counted_by_method: MethodTotals
-  expected_cash: number
-  counted_cash: number
-  cash_variance: number
-  expected_total: number
-  counted_total: number
-  total_variance: number
-  change_given_total: number
-  sale_count: number
-  return_count: number
-  payment_count: number
-  notes: string | null
-  closed_at: string | Date
-}
-
-type DayClosePayload = {
-  business_date: string
-  business_date_label: string
-  expected_by_method: MethodTotals
-  expected_cash: number
-  expected_total: number
-  change_given_total: number
-  sale_count: number
-  return_count: number
-  payment_count: number
-  existing_close: DayCloseRecord | null
-  recent_closes: DayCloseRecord[]
-}
 
 function formatMoney(amount: number) {
   return new Intl.NumberFormat("en-SL", {
@@ -74,15 +45,6 @@ function varianceTone(variance: number) {
   return "over"
 }
 
-async function fetcher(url: string): Promise<DayClosePayload> {
-  const res = await fetch(url, { credentials: "same-origin" })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    throw new Error(data?.error || "Failed to load day close")
-  }
-  return res.json()
-}
-
 export default function DayClosePage() {
   const todayKey = getBusinessDateKey()
   const [dateKey, setDateKey] = useState(todayKey)
@@ -91,9 +53,31 @@ export default function DayClosePage() {
   const [showOtherMethods, setShowOtherMethods] = useState(false)
   const [notes, setNotes] = useState("")
   const [saving, setSaving] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
 
   const cacheKey = `/api/day-close?date=${dateKey}`
-  const { data, error, isLoading, mutate } = useSWR<DayClosePayload>(cacheKey, fetcher)
+  const { data, error, isLoading, mutate } = useSWR<DayClosePayload>(
+    cacheKey,
+    () => fetchDayClose(dateKey),
+    { revalidateOnFocus: !isOffline }
+  )
+
+  useEffect(() => {
+    const sync = () => setIsOffline(isBrowserOffline())
+    sync()
+    window.addEventListener("online", sync)
+    window.addEventListener("offline", sync)
+    return () => {
+      window.removeEventListener("online", sync)
+      window.removeEventListener("offline", sync)
+    }
+  }, [])
+
+  useEffect(() => {
+    void mutate()
+  }, [isOffline, mutate])
+
+  const showOfflinePreview = Boolean(data?._offline || (isOffline && data))
 
   useEffect(() => {
     if (!data) return
@@ -150,6 +134,14 @@ export default function DayClosePage() {
 
   const handleSave = async () => {
     if (!data) return
+    if (showOfflinePreview || isOffline) {
+      toast({
+        title: "Connect to save",
+        description: "Day close must be saved online. You can count your till now and save when back online.",
+        variant: "destructive",
+      })
+      return
+    }
     if (countedCash === "" || Number.isNaN(Number(countedCash))) {
       toast({
         title: "Enter counted cash",
@@ -230,8 +222,31 @@ export default function DayClosePage() {
               Compare what the system recorded with what you counted in the till.
             </p>
           </div>
+          {showOfflinePreview && (
+            <Badge
+              variant="secondary"
+              className="bg-warning/20 text-warning border-warning/40 shrink-0"
+            >
+              <WifiOff className="size-3 mr-1" />
+              Offline
+            </Badge>
+          )}
         </div>
       </header>
+
+      {showOfflinePreview && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm flex gap-2 items-start">
+          <WifiOff className="size-4 shrink-0 mt-0.5 text-warning" />
+          <div>
+            <p className="font-medium text-warning-foreground">Offline preview</p>
+            <p className="text-muted-foreground mt-0.5">
+              Expected totals come from cached sales on this device, including any
+              sales not yet synced. Count your till below, then save when you have
+              internet.
+            </p>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-4 space-y-2">
@@ -451,15 +466,23 @@ export default function DayClosePage() {
 
               <Button
                 className="w-full h-12 text-base font-semibold"
-                disabled={saving || isLoading}
+                disabled={saving || isLoading || showOfflinePreview}
                 onClick={handleSave}
               >
                 {saving
                   ? "Saving..."
-                  : data.existing_close
-                    ? "Update day close"
-                    : "Close day"}
+                  : showOfflinePreview
+                    ? "Connect to save close"
+                    : data.existing_close
+                      ? "Update day close"
+                      : "Close day"}
               </Button>
+              {showOfflinePreview && (
+                <p className="text-xs text-center text-muted-foreground">
+                  Saving needs an internet connection. Your count is kept on this
+                  screen until you reconnect.
+                </p>
+              )}
             </CardContent>
           </Card>
 
