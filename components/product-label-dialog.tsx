@@ -14,8 +14,8 @@ import { toast } from "@/hooks/use-toast"
 import {
   downloadLabelPreviewPng,
   isLabelGraphicReady,
-  printProductLabel,
 } from "@/lib/product-label-print"
+import { printLabelWithHint } from "@/lib/thermal-print-actions"
 import type { ScanCodeDisplayMode } from "@/lib/scan-code"
 
 const ProductLabelPreview = dynamic(
@@ -63,7 +63,7 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
     }
     setPrinting(true)
     try {
-      const ok = printProductLabel(previewRef.current)
+      const ok = printLabelWithHint(previewRef.current)
       if (!ok) {
         toast({ title: "Nothing to print", variant: "destructive" })
       }

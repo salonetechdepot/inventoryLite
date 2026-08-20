@@ -11,8 +11,8 @@ import { SellBarcodeScannerDialog } from "@/components/sell-barcode-scanner-dial
 import {
   downloadLabelPreviewPng,
   isLabelGraphicReady,
-  printProductLabel,
 } from "@/lib/product-label-print"
+import { printLabelWithHint } from "@/lib/thermal-print-actions"
 import {
   generateScanCode,
   isValidScanCode,
@@ -104,7 +104,7 @@ export function ScanCodeField({
     }
     setPrinting(true)
     try {
-      const ok = printProductLabel(previewRef.current)
+      const ok = printLabelWithHint(previewRef.current)
       if (!ok) {
         toast({
           title: "Nothing to print",

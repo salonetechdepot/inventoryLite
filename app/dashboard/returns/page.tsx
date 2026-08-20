@@ -37,7 +37,7 @@ import {
   type ReturnCondition,
   type ReturnDisposition,
 } from "@/lib/return-inventory"
-import { printThermalReceipt } from "@/lib/receipt-print"
+import { printReceiptWithHint } from "@/lib/thermal-print-actions"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 
 const fetcher = fetchWithOfflineCache
@@ -229,7 +229,7 @@ export default function ReturnsPage() {
     0
   )
   const totalDiscarded = Math.max(0, totalItemsReturned - totalRestocked)
-  const printReceipt = () => printThermalReceipt()
+  const printReceipt = () => printReceiptWithHint()
 
   return (
     <main className="pb-24">

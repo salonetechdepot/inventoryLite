@@ -70,6 +70,7 @@ import {
   type PaymentMethodId,
   initialPaymentMethodForCheckout,
 } from "@/lib/payment-methods"
+import { printReceiptWithHint } from "@/lib/thermal-print-actions"
 import { printThermalReceipt } from "@/lib/receipt-print"
 import { playScanBeep } from "@/lib/scan-feedback"
 import { resolveCheckoutPayment, shouldUsePartPayment } from "@/lib/checkout-payment"
@@ -632,7 +633,7 @@ function SellPageContent() {
   })
 
   const printReceipt = () => {
-    printThermalReceipt()
+    printReceiptWithHint()
   }
 
   const isReturn = transactionType === "return"

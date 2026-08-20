@@ -40,7 +40,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { CollectPaymentForm } from "@/components/collect-payment-form"
 import { formatReceiptLinkLabel } from "@/lib/receipt-display"
-import { printThermalReceipt } from "@/lib/receipt-print"
+import { printReceiptWithHint } from "@/lib/thermal-print-actions"
 import { cn } from "@/lib/utils"
 
 const fetcher = fetchWithOfflineCache
@@ -455,7 +455,7 @@ function ReceiptDetailsDialog({
             receipt={receipt}
             businessName={businessName}
             shopLogoUrl={shopLogoUrl}
-            onPrint={() => printThermalReceipt()}
+            onPrint={() => printReceiptWithHint()}
             onClose={onClose}
             footerSlot={
               <>

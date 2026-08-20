@@ -1,3 +1,9 @@
+import {
+  attachThermalPrintCleanup,
+  prepareThermalClone,
+  scheduleThermalPrint,
+} from '@/lib/thermal-print'
+
 /** CSS class toggled on `html`/`body` while printing a receipt (see globals.css). */
 export const THERMAL_RECEIPT_PRINT_CLASS = 'printing-thermal-receipt'
 export const RECEIPT_PRINT_PORTAL_ID = 'receipt-print-portal'
@@ -11,9 +17,7 @@ function removeOtherPrintPortals() {
 }
 
 function prepareReceiptClone(source: HTMLElement): HTMLElement {
-  const clone = source.cloneNode(true) as HTMLElement
-  clone.querySelectorAll('.receipt-no-print').forEach((el) => el.remove())
-  return clone
+  return prepareThermalClone(source, { removeSelectors: ['.receipt-no-print'] })
 }
 
 /**
@@ -21,13 +25,13 @@ function prepareReceiptClone(source: HTMLElement): HTMLElement {
  * Clones `.receipt-print-root` onto `document.body` so dialog layout does not
  * affect print width or leave blank space on the page.
  */
-export function printThermalReceipt(sourceContainer?: HTMLElement): void {
-  if (typeof window === 'undefined') return
+export function printThermalReceipt(sourceContainer?: HTMLElement): boolean {
+  if (typeof window === 'undefined') return false
 
   const source =
     sourceContainer ??
     document.querySelector<HTMLElement>('.receipt-print-root')
-  if (!source) return
+  if (!source) return false
 
   removeReceiptPrintPortal()
   removeOtherPrintPortals()
@@ -52,8 +56,11 @@ export function printThermalReceipt(sourceContainer?: HTMLElement): void {
     removeReceiptPrintPortal()
   }
 
-  window.addEventListener('afterprint', cleanup, { once: true })
-  window.setTimeout(cleanup, 5_000)
+  attachThermalPrintCleanup(cleanup)
 
-  window.print()
+  scheduleThermalPrint(() => {
+    window.print()
+  })
+
+  return true
 }

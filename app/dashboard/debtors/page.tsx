@@ -30,7 +30,7 @@ import { aggregateDebtors, sumOutstanding, type DebtorEntry } from "@/lib/debtor
 import { CollectPaymentForm } from "@/components/collect-payment-form"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import { useAuth } from "@/hooks/use-auth"
-import { printThermalReceipt } from "@/lib/receipt-print"
+import { printReceiptWithHint } from "@/lib/thermal-print-actions"
 import { cn } from "@/lib/utils"
 
 const fetcher = fetchWithOfflineCache
@@ -215,7 +215,7 @@ export default function DebtorsPage() {
               receipt={activeReceipt}
               businessName={user?.business_name}
               shopLogoUrl={user?.shop_logo_url}
-              onPrint={() => printThermalReceipt()}
+              onPrint={() => printReceiptWithHint()}
               onClose={() => setActiveReceipt(null)}
               footerSlot={
                 !activeReceipt.is_paid ? (
