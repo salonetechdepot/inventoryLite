@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { ArrowLeft, Package } from "lucide-react"
@@ -14,9 +14,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { toast } from "@/hooks/use-toast"
 import { ProductSpecFields } from "@/components/product-spec-fields"
 import type { ProductSpecifications } from "@/lib/product-specifications"
+import { ScanCodeField } from "@/components/scan-code-field"
+import { scanCodeValidationError } from "@/lib/scan-code"
 import {
   CATEGORIES_CACHE_KEY,
   fetchWithOfflineCache,
+  PRODUCTS_CACHE_KEY,
   sendOrQueueMutation,
 } from "@/lib/offline-sync"
 
@@ -34,6 +37,10 @@ export default function NewProductPage() {
     CATEGORIES_CACHE_KEY,
     fetcher
   )
+  const { data: productsData } = useSWR<{ products: { scan_code: string | null }[] }>(
+    PRODUCTS_CACHE_KEY,
+    fetcher
+  )
 
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState("")
@@ -49,6 +56,17 @@ export default function NewProductPage() {
   const [loading, setLoading] = useState(false)
 
   const categories = categoriesData?.categories ?? []
+  const categoryName = useMemo(
+    () => categories.find((c) => c.id === categoryId)?.name ?? "",
+    [categories, categoryId]
+  )
+  const existingScanCodes = useMemo(
+    () =>
+      (productsData?.products ?? [])
+        .map((p) => p.scan_code)
+        .filter((code): code is string => Boolean(code?.trim())),
+    [productsData]
+  )
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -57,6 +75,13 @@ export default function NewProductPage() {
 
     if (!name.trim()) {
       setError("Please enter a product name")
+      setLoading(false)
+      return
+    }
+
+    const scanErr = scanCodeValidationError(scanCode)
+    if (scanErr) {
+      setError(scanErr)
       setLoading(false)
       return
     }
@@ -176,18 +201,14 @@ export default function NewProductPage() {
                 )}
               </Field>
 
-              <Field>
-                <FieldLabel htmlFor="scanCode" className="text-base">Scan Code</FieldLabel>
-                <Input
-                  id="scanCode"
-                  type="text"
-                  placeholder="Barcode or SKU code"
-                  value={scanCode}
-                  onChange={(e) => setScanCode(e.target.value)}
-                  className="h-12 text-base"
-                />
-                <FieldDescription>Used when scanning products already in inventory</FieldDescription>
-              </Field>
+              <ScanCodeField
+                value={scanCode}
+                onChange={setScanCode}
+                productName={name}
+                unitPrice={unitPrice}
+                categoryName={categoryName}
+                existingScanCodes={existingScanCodes}
+              />
 
               <Field>
                 <FieldLabel htmlFor="tags" className="text-base">Tags</FieldLabel>

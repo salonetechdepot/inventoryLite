@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Minus, Plus, Edit } from "lucide-react"
+import { Minus, Plus, Edit, Tag } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -20,6 +20,7 @@ interface Product {
   category_icon: string | null
   has_specifications: boolean
   tags: string[]
+  scan_code?: string | null
 }
 
 function formatPrice(amount: number) {
@@ -31,12 +32,14 @@ function formatPrice(amount: number) {
   }).format(amount).replace('SLL', 'NLe')
 }
 
-export function ProductCard({ 
-  product, 
-  onStockUpdate 
-}: { 
+export function ProductCard({
+  product,
+  onStockUpdate,
+  onPrintLabel,
+}: {
   product: Product
-  onStockUpdate?: () => void 
+  onStockUpdate?: () => void
+  onPrintLabel?: () => void
 }) {
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [localQuantity, setLocalQuantity] = useState(product.quantity)
@@ -127,11 +130,24 @@ export function ProductCard({
               ))}
             </div>
           </div>
-          <Link href={`/dashboard/products/${product.id}/edit`}>
-            <Button variant="ghost" size="icon" className="size-9 shrink-0">
-              <Edit className="size-4" />
-            </Button>
-          </Link>
+          <div className="flex shrink-0 gap-1">
+            {onPrintLabel && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9"
+                title="Print label"
+                onClick={onPrintLabel}
+              >
+                <Tag className="size-4" />
+              </Button>
+            )}
+            <Link href={`/dashboard/products/${product.id}/edit`}>
+              <Button variant="ghost" size="icon" className="size-9">
+                <Edit className="size-4" />
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Quick Adjust Buttons */}

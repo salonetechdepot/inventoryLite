@@ -21,6 +21,7 @@ const QUEUE_STORE = "queue"
 const CONFLICT_STORE = "conflicts"
 const MAX_RETRY_COUNT = 5
 const PRODUCTS_CACHE_KEY = "/api/products"
+export { PRODUCTS_CACHE_KEY }
 /** Stable SWR keys — filters are client-side so offline cache always hits. */
 export const RETURN_RECEIPTS_CACHE_KEY = "/api/receipts?type=return&limit=500&status=all"
 export const SALE_RECEIPTS_CACHE_KEY = "/api/receipts?type=sale&limit=500&status=all"
@@ -535,6 +536,27 @@ async function buildOptimisticBatchReceiptAsync(
   const createdAt = new Date().toISOString()
   const customerName = typeof payload.customerName === "string" ? payload.customerName.trim() : ""
   const customerPhone = typeof payload.customerPhone === "string" ? payload.customerPhone.trim() : ""
+  const originalReceiptId =
+    receiptType === "RETURN" && typeof payload.originalReceiptId === "string"
+      ? payload.originalReceiptId.trim() || null
+      : null
+
+  let original_receipt: CachedReceipt["original_receipt"] = null
+  if (originalReceiptId) {
+    const salesCache =
+      (await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY))
+        ?.receipts ?? []
+    const linked = salesCache.find((r) => r.id === originalReceiptId)
+    if (linked) {
+      original_receipt = {
+        id: linked.id,
+        created_at: linked.created_at,
+        net_amount: Number(linked.net_amount ?? 0),
+      }
+    } else {
+      original_receipt = { id: originalReceiptId, created_at: createdAt, net_amount: 0 }
+    }
+  }
 
   const sales = items.map((item, idx) => {
     const p = productById.get(item.productId)
@@ -584,6 +606,8 @@ async function buildOptimisticBatchReceiptAsync(
     is_part_payment: storeIsPartPayment,
     is_paid: isPaid,
     notes: null,
+    original_receipt_id: originalReceiptId,
+    original_receipt,
     created_at: createdAt,
     updated_at: createdAt,
     item_count: sales.length,
@@ -654,6 +678,18 @@ function formatReceiptFromBatchResponse(data: {
     is_part_payment: Boolean(r.is_part_payment),
     is_paid: Boolean(r.is_paid),
     notes: (r.notes as string | null) ?? null,
+    original_receipt_id: (r.original_receipt_id as string | null) ?? null,
+    original_receipt:
+      r.original_receipt && typeof r.original_receipt === "object"
+        ? {
+            id: String((r.original_receipt as { id?: string }).id ?? r.original_receipt_id ?? ""),
+            created_at:
+              (r.original_receipt as { created_at?: string }).created_at ?? createdAt,
+            net_amount: Number(
+              (r.original_receipt as { net_amount?: number }).net_amount ?? 0
+            ),
+          }
+        : null,
     created_at: createdAt,
     updated_at: (r.updated_at as string | undefined) ?? createdAt,
     item_count: sales.length,

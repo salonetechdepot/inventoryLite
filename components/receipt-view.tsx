@@ -1,6 +1,7 @@
 "use client"
 
 import { Check, Printer, Undo2, Link2 } from "lucide-react"
+import dynamic from "next/dynamic"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -12,6 +13,12 @@ import {
   type ReturnDisposition,
 } from "@/lib/return-inventory"
 import { cashTenderedFromReceipt } from "@/lib/checkout-payment"
+
+const ReceiptReferenceQr = dynamic(
+  () =>
+    import("@/components/receipt-reference-qr").then((m) => m.ReceiptReferenceQr),
+  { ssr: false }
+)
 
 export interface ReceiptPayment {
   id: string
@@ -107,11 +114,11 @@ export function ReceiptView({
   const isReturn = String(receipt.type).toUpperCase() === "RETURN"
 
   return (
-    <div className={cn("receipt-print-root flex flex-col gap-4 print:gap-1", className)}>
-      <div className="receipt-print-header text-center print:mb-0">
+    <div className={cn("receipt-print-root flex flex-col gap-4", className)}>
+      <div className="receipt-print-header text-center">
         <div
           className={cn(
-            "mx-auto mb-3 flex size-14 items-center justify-center rounded-full print:hidden",
+            "receipt-no-print mx-auto mb-3 flex size-14 items-center justify-center rounded-full",
             isReturn ? "bg-warning" : "bg-primary"
           )}
         >
@@ -125,15 +132,15 @@ export function ReceiptView({
           <img
             src={shopLogoUrl}
             alt={businessName || "Shop"}
-            className="mx-auto mb-2 size-12 rounded-md object-cover print:mb-1 print:size-9"
+            className="mx-auto mb-2 size-12 rounded-md object-cover"
           />
         )}
         {businessName && (
-          <p className="receipt-print-shop text-base font-bold uppercase tracking-wide print:text-xs">
+          <p className="receipt-print-shop text-base font-bold uppercase tracking-wide">
             {businessName}
           </p>
         )}
-        <h2 className="receipt-print-title text-lg font-bold print:text-sm">
+        <h2 className="receipt-print-title text-lg font-bold">
           {isReturn ? "Return Receipt" : "Sales Receipt"}
         </h2>
         <p className="receipt-print-meta text-xs text-muted-foreground">
@@ -142,7 +149,7 @@ export function ReceiptView({
       </div>
 
       {(receipt.customer_name || receipt.customer_phone) && (
-        <div className="receipt-print-section border rounded-lg p-2 text-sm print:border-0 print:p-0">
+        <div className="receipt-print-section border rounded-lg p-2 text-sm">
           <p className="receipt-print-section-label text-xs font-semibold uppercase text-muted-foreground">
             Customer
           </p>
@@ -152,9 +159,9 @@ export function ReceiptView({
       )}
 
       {isReturn && receipt.original_receipt_id && (
-        <div className="receipt-print-section border rounded-lg p-2 text-sm bg-muted/30 print:border-0 print:bg-transparent print:p-0">
+        <div className="receipt-print-section border rounded-lg p-2 text-sm bg-muted/30">
           <p className="receipt-print-section-label text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
-            <Link2 className="size-3 print:hidden" />
+            <Link2 className="receipt-no-print size-3" />
             Linked to original sale
           </p>
           <p className="mt-1">
@@ -173,19 +180,19 @@ export function ReceiptView({
       )}
 
       {/* Items */}
-      <div className="receipt-print-section border rounded-lg overflow-hidden print:border-0">
-        <div className="receipt-print-row receipt-print-row-header flex items-center justify-between bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground print:bg-transparent print:px-0">
+      <div className="receipt-print-section border rounded-lg overflow-hidden">
+        <div className="receipt-print-row receipt-print-row-header flex items-center justify-between bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
           <span>Item</span>
           <span>Amount</span>
         </div>
-        <div className="divide-y print:divide-black/30">
+        <div className="divide-y">
           {receipt.sales.map((line) => (
             <div
               key={line.id}
-              className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm print:px-0 print:py-1 print:text-xs"
+              className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm"
             >
               <div className="min-w-0 flex-1">
-                <p className="receipt-print-item-name font-medium truncate print:whitespace-normal">
+                <p className="receipt-print-item-name font-medium truncate">
                   {line.product_name}
                 </p>
                 <p className="receipt-print-item-detail text-xs text-muted-foreground">
@@ -193,9 +200,9 @@ export function ReceiptView({
                 </p>
                 {isReturn &&
                   (line.return_condition || line.return_disposition) && (
-                    <p className="text-xs mt-0.5 flex flex-wrap gap-1 print:mt-0 print:gap-0.5">
+                    <p className="text-xs mt-0.5 flex flex-wrap gap-1">
                       {line.return_condition && (
-                        <Badge variant="outline" className="h-5 text-[10px] font-normal print:h-auto print:border-0 print:p-0 print:text-[10px]">
+                        <Badge variant="outline" className="h-5 text-[10px] font-normal">
                           {formatReturnCondition(line.return_condition as ReturnCondition)}
                         </Badge>
                       )}
@@ -203,7 +210,7 @@ export function ReceiptView({
                         <Badge
                           variant="outline"
                           className={cn(
-                            "h-5 text-[10px] font-normal print:h-auto print:border-0 print:p-0 print:text-[10px]",
+                            "h-5 text-[10px] font-normal",
                             line.return_disposition === "RESTOCK"
                               ? "border-primary/40 text-primary"
                               : "border-destructive/40 text-destructive"
@@ -226,25 +233,25 @@ export function ReceiptView({
       </div>
 
       {/* Totals */}
-      <div className="receipt-print-section border rounded-lg divide-y text-sm print:border-0 print:divide-black/30">
-        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+      <div className="receipt-print-section border rounded-lg divide-y text-sm">
+        <div className="receipt-print-row flex justify-between px-3 py-2">
           <span className="text-muted-foreground">Subtotal</span>
           <span>{formatPrice(receipt.subtotal)}</span>
         </div>
         {receipt.discount_amount > 0 && (
-          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+          <div className="receipt-print-row flex justify-between px-3 py-2">
             <span className="text-muted-foreground">Discount</span>
             <span>−{formatPrice(receipt.discount_amount)}</span>
           </div>
         )}
-        <div className="receipt-print-row receipt-print-total-row flex justify-between px-3 py-2 font-bold bg-primary/5 print:bg-transparent print:px-0 print:py-1">
+        <div className="receipt-print-row receipt-print-total-row flex justify-between px-3 py-2 font-bold bg-primary/5">
           <span>TOTAL</span>
-          <span className="text-primary text-base print:text-xs print:text-black">
+          <span className="text-primary text-base">
             {formatPrice(receipt.net_amount)}
           </span>
         </div>
         {receipt.change_given > 0 && (
-          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+          <div className="receipt-print-row flex justify-between px-3 py-2">
             <span className="text-muted-foreground">Cash tendered</span>
             <span>
               {formatPrice(
@@ -253,34 +260,34 @@ export function ReceiptView({
             </span>
           </div>
         )}
-        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+        <div className="receipt-print-row flex justify-between px-3 py-2">
           <span className="text-muted-foreground">Amount received</span>
           <span>{formatPrice(receipt.amount_paid)}</span>
         </div>
         {receipt.change_given > 0 && (
-          <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+          <div className="receipt-print-row flex justify-between px-3 py-2">
             <span className="text-muted-foreground">Change given</span>
             <span>{formatPrice(receipt.change_given)}</span>
           </div>
         )}
         {receipt.amount_due > 0 && (
-          <div className="receipt-print-row flex justify-between px-3 py-2 bg-warning/10 print:bg-transparent print:px-0 print:py-0.5 print:text-xs">
+          <div className="receipt-print-row flex justify-between px-3 py-2 bg-warning/10">
             <span className="font-semibold">Balance Due</span>
-            <span className="font-semibold text-warning print:text-black">
+            <span className="font-semibold text-warning">
               {formatPrice(receipt.amount_due)}
             </span>
           </div>
         )}
-        <div className="receipt-print-row flex justify-between px-3 py-2 print:px-0 print:py-0.5 print:text-xs">
+        <div className="receipt-print-row flex justify-between px-3 py-2">
           <span>Status</span>
-          <span className="hidden print:inline print:font-semibold">
+          <span className="receipt-print-status hidden font-semibold">
             {receipt.is_paid
               ? "Paid"
               : Number(receipt.amount_paid || 0) > 0
                 ? "Part paid"
                 : "Credit"}
           </span>
-          <span className="print:hidden">
+          <span className="receipt-no-print">
             {receipt.is_paid ? (
               <Badge variant="default" className="bg-primary">
                 Paid
@@ -296,15 +303,15 @@ export function ReceiptView({
 
       {/* Payment history (if any) */}
       {receipt.payments && receipt.payments.length > 0 && (
-        <div className="receipt-print-section border rounded-lg overflow-hidden print:border-0">
-          <div className="receipt-print-section-label bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground print:bg-transparent print:px-0">
+        <div className="receipt-print-section border rounded-lg overflow-hidden">
+          <div className="receipt-print-section-label bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
             Payment history
           </div>
-          <div className="divide-y print:divide-black/30">
+          <div className="divide-y">
             {receipt.payments.map((p) => (
               <div
                 key={p.id}
-                className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm print:px-0 print:py-1 print:text-xs"
+                className="receipt-print-row flex justify-between gap-2 px-3 py-2 text-sm"
               >
                 <div className="min-w-0">
                   <p className="font-medium">
@@ -325,20 +332,22 @@ export function ReceiptView({
       )}
 
       {receipt.notes && (
-        <div className="receipt-print-section print:text-xs">
+        <div className="receipt-print-section">
           <p className="receipt-print-section-label">Notes</p>
           <p>{receipt.notes}</p>
         </div>
       )}
 
-      <p className="receipt-print-footer hidden print:block">
+      <ReceiptReferenceQr receiptId={receipt.id} size={68} className="mt-2" />
+
+      <p className="receipt-print-footer hidden">
         Thank you for your business
       </p>
 
-      {footerSlot && <div className="print:hidden">{footerSlot}</div>}
+      {footerSlot && <div className="receipt-no-print">{footerSlot}</div>}
 
       {(onPrint || onClose) && (
-        <div className="flex gap-2 print:hidden">
+        <div className="receipt-no-print flex gap-2">
           {onPrint && (
             <Button variant="outline" onClick={onPrint} className="flex-1">
               <Printer className="mr-2 size-4" />

@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react"
 import useSWR from "swr"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
   Undo2,
@@ -37,6 +38,7 @@ import {
   type ReturnDisposition,
 } from "@/lib/return-inventory"
 import { printThermalReceipt } from "@/lib/receipt-print"
+import { formatReceiptLinkLabel } from "@/lib/receipt-display"
 
 const fetcher = fetchWithOfflineCache
 
@@ -117,6 +119,8 @@ function receiptToViewData(r: ApiReceipt): ReceiptData {
     is_part_payment: r.is_part_payment,
     is_paid: r.is_paid,
     notes: r.notes,
+    original_receipt_id: r.original_receipt_id ?? null,
+    original_receipt: r.original_receipt ?? null,
     created_at: r.created_at,
     sales: r.sales.map((line) => ({
       id: line.id,
@@ -163,6 +167,7 @@ function groupReceiptsByDay(receipts: ApiReceipt[]): DailyGroup[] {
 }
 
 export default function ReturnsPage() {
+  const router = useRouter()
   const { user } = useAuth()
   const [search, setSearch] = useState("")
   const [period, setPeriod] = useState<PeriodFilter>("all")
@@ -516,6 +521,26 @@ export default function ReturnsPage() {
                 setActiveReceipt(null)
                 void mutate()
               }}
+              footerSlot={
+                activeReceipt.original_receipt_id ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      router.push(
+                        `/dashboard/sales?receipt=${activeReceipt.original_receipt_id}`
+                      )
+                    }}
+                  >
+                    View original sale{" "}
+                    {formatReceiptLinkLabel(
+                      activeReceipt.original_receipt_id,
+                      activeReceipt.original_receipt?.created_at
+                    )}
+                  </Button>
+                ) : undefined
+              }
             />
           )}
         </DialogContent>

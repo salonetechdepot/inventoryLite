@@ -570,15 +570,12 @@ function SellPageContent() {
   }
 
   const handleScanInput = (code: string) => {
-    const trimmedCode = code.trim().toLowerCase()
+    const trimmedCode = code.trim()
     if (!trimmedCode) return
 
-    const matchedProduct =
-      products.find((p) => p.scan_code?.toLowerCase() === trimmedCode) ||
-      products.find(
-        (p) =>
-          p.name.toLowerCase().includes(trimmedCode) || p.id.includes(trimmedCode)
-      )
+    const matchedProduct = products.find(
+      (p) => p.scan_code?.toLowerCase() === trimmedCode.toLowerCase()
+    )
 
     if (matchedProduct) {
       addToCart(matchedProduct)
@@ -593,7 +590,35 @@ function SellPageContent() {
       if (posSettings.scanBeep) playScanBeep(false)
       toast({
         title: "Product not found",
-        description: `No product with scan code "${code.trim()}". Add it under Products first.`,
+        description: `No product with scan code "${trimmedCode}". Add it under Products first.`,
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleSearchSubmit = (query: string) => {
+    const q = query.trim()
+    if (!q) return
+
+    const byScan = products.find(
+      (p) => p.scan_code?.toLowerCase() === q.toLowerCase()
+    )
+    const matchedProduct =
+      byScan ??
+      products.find((p) => p.name.toLowerCase().includes(q.toLowerCase()))
+
+    if (matchedProduct) {
+      addToCart(matchedProduct)
+      setSearch("")
+      setSearchEditable(false)
+      toast({
+        title: "Added to cart",
+        description: matchedProduct.name,
+      })
+    } else {
+      toast({
+        title: "No match",
+        description: `No product matching "${q}".`,
         variant: "destructive",
       })
     }
@@ -715,7 +740,11 @@ function SellPageContent() {
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  handleScanInput(search)
+                  if (searchEditable) {
+                    handleSearchSubmit(search)
+                  } else {
+                    handleScanInput(search)
+                  }
                   setSearch("")
                   setSearchEditable(false)
                 }

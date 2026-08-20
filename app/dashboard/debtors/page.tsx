@@ -206,7 +206,7 @@ export default function DebtorsPage() {
           if (!open) setActiveReceipt(null)
         }}
       >
-        <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
           <DialogHeader className="sr-only">
             <DialogTitle>Receipt</DialogTitle>
           </DialogHeader>

@@ -10,8 +10,9 @@ import {
   trimmedString,
   uuidSchema,
 } from '@/lib/api-validation'
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { z } from 'zod'
+import { isValidScanCode } from '@/lib/scan-code'
 
 const productCreateSchema = z.object({
   name: trimmedString(255),
@@ -21,7 +22,14 @@ const productCreateSchema = z.object({
   lowStockThreshold: quantitySchema.optional().default(5),
   categoryId: uuidSchema.nullish(),
   imageUrl: z.string().trim().max(500).nullish(),
-  scanCode: z.string().trim().max(255).nullish(),
+  scanCode: z
+    .string()
+    .trim()
+    .max(255)
+    .nullish()
+    .refine((val) => !val || isValidScanCode(val), {
+      message: "Scan code may only use letters, numbers, hyphen, underscore, or dot.",
+    }),
   tags: z.array(z.string().trim().min(1).max(50)).max(25).optional().default([]),
   hasSpecifications: z.boolean().optional().default(false),
   specifications: z.unknown().optional(),
@@ -116,6 +124,15 @@ export async function POST(request: Request) {
     })
   } catch (error) {
     console.error('Create product error:', error)
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      return NextResponse.json(
+        { error: 'This scan code is already used by another product.' },
+        { status: 409 }
+      )
+    }
     return NextResponse.json({ error: 'Failed to create product' }, { status: 500 })
   }
 }
