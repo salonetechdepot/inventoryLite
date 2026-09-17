@@ -110,6 +110,9 @@ export async function clearSessionBackup() {
 
 function isOfflineGatewayResponse(response: Response) {
   const contentType = response.headers.get("content-type") ?? ""
+  if (contentType.includes("application/json")) {
+    return response.status === 503 || response.status === 504
+  }
   return (
     response.status === 503 ||
     response.status === 504 ||
@@ -1185,6 +1188,25 @@ export async function runDeltaSync(options?: {
   return activeDeltaSync
 }
 
+async function refreshOfflineDataViaIndividualFetches(): Promise<boolean> {
+  if (!isBrowser() || !navigator.onLine) return false
+  let ok = 0
+  for (const key of OFFLINE_DATA_CACHE_KEYS) {
+    try {
+      await fetchWithOfflineCache(key)
+      ok += 1
+    } catch {
+      // continue — partial cache is better than none
+    }
+  }
+  try {
+    await warmDashboardRscCache()
+  } catch {
+    // ignore
+  }
+  return ok > 0
+}
+
 async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSyncResult> {
   const empty = {
     ok: false,
@@ -1212,8 +1234,11 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
         : `/api/sync?since=${encodeURIComponent(cursorState.cursor)}`
 
     const res = await fetch(syncUrl, { credentials: "same-origin" })
-    if (!res.ok) {
-      return { ...empty, reason: `sync_${res.status}` }
+    if (!res.ok || isOfflineGatewayResponse(res)) {
+      const fallbackOk = await refreshOfflineDataViaIndividualFetches()
+      return fallbackOk
+        ? { ok: true, full: false, products: 0, sale_receipts: 0, return_receipts: 0 }
+        : { ...empty, reason: `sync_${res.status}` }
     }
 
     const payload = (await res.json()) as SyncPayload
@@ -1293,7 +1318,10 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
       return_receipts: payload.counts.return_receipts,
     }
   } catch {
-    return { ...empty, reason: "sync_failed" }
+    const fallbackOk = await refreshOfflineDataViaIndividualFetches()
+    return fallbackOk
+      ? { ok: true, full: false, products: 0, sale_receipts: 0, return_receipts: 0 }
+      : { ...empty, reason: "sync_failed" }
   }
 }
 

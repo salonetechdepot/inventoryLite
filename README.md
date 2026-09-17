@@ -99,11 +99,18 @@ If the site works in one browser but Edge shows **“can't reach this page” / 
    - Edge → Settings → Cookies and site permissions → See all cookies and site data → search `vercel.app` → Remove
    - Or DevTools (F12) → Application → Service Workers → Unregister → Clear storage
 2. Try **InPrivate** window (extensions off).
-3. Confirm **Vercel deployment succeeded** (Dashboard → Deployments → latest = Ready).
-4. In Vercel **Project → Settings → Environment Variables**, set `DATABASE_URL`, `JWT_SECRET`, and auth keys for **Production**.
+3. Confirm **Vercel deployment succeeded** (Dashboard → Deployments → latest = Ready). Check **Build Logs** for `DATABASE_URL is missing` or `migrate deploy failed`.
+4. In Vercel **Project → Settings → Environment Variables**, set for **Production**: `DATABASE_URL`, `JWT_SECRET` (32+ chars), and auth keys.
 5. Wake **Neon** database (free tier sleeps) before redeploying.
 
 The app registers a service worker in production only; a broken cached worker can block loads until site data is cleared.
+
+### Offline works on localhost but not on the live URL
+
+1. Sign in **once while online** on the production site (not only localhost).
+2. Open **Sell**, **Products**, and **History** while online so data caches locally.
+3. After deploy, clear site data / unregister old service workers (service worker **v6** fixes bad dashboard precache).
+4. If pages stay empty online, open Vercel **Functions** logs — often a failed deploy or missing env vars.
 
 ## Scripts
 

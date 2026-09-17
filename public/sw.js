@@ -1,21 +1,14 @@
-const SW_VERSION = "v5"
+const SW_VERSION = "v6"
 const STATIC_CACHE = `stockeasy-static-${SW_VERSION}`
 const RUNTIME_CACHE = `stockeasy-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
+/** Public assets only — do not precache /dashboard (auth redirects pollute offline shell). */
 const PRECACHE_URLS = [
-  "/",
   "/login",
-  "/dashboard",
-  "/dashboard/sell",
-  "/dashboard/products",
-  "/dashboard/sales",
-  "/dashboard/returns",
-  "/dashboard/categories",
-  "/dashboard/analytics",
-  "/dashboard/sync-conflicts",
   OFFLINE_FALLBACK_URL,
   "/icon.svg",
+  "/manifest.webmanifest",
 ]
 
 function rscCacheKey(pathname) {

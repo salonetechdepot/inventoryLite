@@ -46,10 +46,12 @@ export default function DashboardLayout({
       router.replace("/account-locked")
       return
     }
+    // Keep dashboard when offline with a valid persisted session (production PWA).
+    if (isOffline && user) return
     if (sessionExpired || !user) {
       goToLogin(sessionExpired ? "session_expired" : undefined, router)
     }
-  }, [user, isLoading, accountLocked, sessionExpired, router])
+  }, [user, isLoading, accountLocked, sessionExpired, router, isOffline])
 
   useEffect(() => {
     if (isOffline && pathname?.startsWith("/dashboard/account")) {
