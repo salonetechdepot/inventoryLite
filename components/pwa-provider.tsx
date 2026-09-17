@@ -29,6 +29,7 @@ export function PwaProvider() {
           if (!worker) return
           worker.addEventListener("statechange", () => {
             if (worker.state === "activated" && navigator.serviceWorker.controller) {
+              if (!navigator.onLine) return
               window.location.reload()
             }
           })

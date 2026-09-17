@@ -1,9 +1,18 @@
-const SW_VERSION = "v6"
+const SW_VERSION = "v7"
 const STATIC_CACHE = `stockeasy-static-${SW_VERSION}`
 const RUNTIME_CACHE = `stockeasy-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
-/** Public assets only — do not precache /dashboard (auth redirects pollute offline shell). */
+const DASHBOARD_SHELL_FALLBACKS = [
+  "/dashboard/sell",
+  "/dashboard/products",
+  "/dashboard/sales",
+  "/dashboard/returns",
+  "/dashboard",
+  "/",
+]
+
+/** Public assets only — do not precache authenticated dashboard HTML. */
 const PRECACHE_URLS = [
   "/login",
   OFFLINE_FALLBACK_URL,
@@ -28,6 +37,13 @@ function offlineHtml() {
 async function cachedAppShell(pathname) {
   const exact = await caches.match(pathname)
   if (exact) return exact
+
+  if (pathname.startsWith("/dashboard")) {
+    for (const fallback of DASHBOARD_SHELL_FALLBACKS) {
+      const hit = await caches.match(fallback)
+      if (hit) return hit
+    }
+  }
 
   if (pathname === "/dashboard" || pathname === "/") {
     const dash = await caches.match("/dashboard")
@@ -69,6 +85,12 @@ async function matchRsc(request) {
   const url = new URL(request.url)
   const byPath = await caches.match(rscCacheKey(url.pathname))
   if (byPath) return byPath
+  if (url.pathname.startsWith("/dashboard")) {
+    for (const fallback of DASHBOARD_SHELL_FALLBACKS) {
+      const alt = await caches.match(rscCacheKey(fallback))
+      if (alt) return alt
+    }
+  }
   return null
 }
 
@@ -116,12 +138,17 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(RUNTIME_CACHE)
+        const cached = await matchRsc(request)
+
         try {
           const networkResponse = await fetch(request)
-          await cacheRscResponse(cache, request, networkResponse)
+          if (networkResponse.ok) {
+            await cacheRscResponse(cache, request, networkResponse)
+            return networkResponse
+          }
+          if (cached) return cached
           return networkResponse
         } catch {
-          const cached = await matchRsc(request)
           if (cached) return cached
           return new Response(null, {
             status: 503,
@@ -152,21 +179,30 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
-  // Navigations and other same-origin GETs — network first, cache fallback.
+  // Navigations — try cache when network fails or returns an error document.
   event.respondWith(
     (async () => {
       const cache = await caches.open(RUNTIME_CACHE)
+      const isNavigate =
+        request.mode === "navigate" ||
+        request.headers.get("accept")?.includes("text/html")
+
       try {
         const networkResponse = await fetch(request)
-        await cacheResponse(cache, request, networkResponse)
+        if (networkResponse.ok) {
+          await cacheResponse(cache, request, networkResponse)
+          return networkResponse
+        }
+        if (isNavigate) {
+          const exact = await caches.match(request)
+          if (exact) return exact
+          return cachedAppShell(url.pathname)
+        }
         return networkResponse
       } catch {
         const exact = await caches.match(request)
         if (exact) return exact
-        if (
-          request.mode === "navigate" ||
-          request.headers.get("accept")?.includes("text/html")
-        ) {
+        if (isNavigate) {
           return cachedAppShell(url.pathname)
         }
         return new Response("", { status: 503, statusText: "Offline" })

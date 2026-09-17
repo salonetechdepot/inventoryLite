@@ -555,7 +555,7 @@ function SellPageContent() {
       setShowCheckout(false)
       setShowReceipt(true)
       clearCart()
-      mutate()
+      void mutate(undefined, { revalidate: navigator.onLine })
 
       if (queued) {
         toast({
