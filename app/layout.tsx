@@ -5,9 +5,9 @@ import { PwaProvider } from '@/components/pwa-provider'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'StockEasy - Simple Inventory for Sierra Leone SMEs',
+  title: 'BIVA - Simple Inventory for Sierra Leone SMEs',
   description: 'Easy inventory management for small businesses in Sierra Leone. Track products, manage stock, record sales.',
-  generator: 'v0.app',
+  generator: 'sbm',
   icons: {
     icon: [
       {

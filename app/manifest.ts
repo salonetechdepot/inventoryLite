@@ -3,8 +3,8 @@ import type { MetadataRoute } from "next"
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "StockEasy",
-    short_name: "StockEasy",
+    name: "BIVA",
+    short_name: "BIVA",
     description: "Simple inventory management for Sierra Leone SMEs.",
     start_url: "/dashboard",
     scope: "/",
