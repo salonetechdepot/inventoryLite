@@ -11,6 +11,7 @@ export const DASHBOARD_OFFLINE_ROUTES = [
   "/dashboard/categories",
   "/dashboard/analytics",
   "/dashboard/sync-conflicts",
+  "/dashboard/account",
 ] as const
 
 export function isBrowserOffline(): boolean {
@@ -18,7 +19,6 @@ export function isBrowserOffline(): boolean {
 }
 
 export function isDashboardOfflinePath(pathname: string): boolean {
-  if (pathname === "/dashboard/account") return false
   return (
     pathname === "/dashboard" ||
     pathname.startsWith("/dashboard/products") ||
@@ -29,7 +29,8 @@ export function isDashboardOfflinePath(pathname: string): boolean {
     pathname.startsWith("/dashboard/day-close") ||
     pathname.startsWith("/dashboard/categories") ||
     pathname.startsWith("/dashboard/analytics") ||
-    pathname.startsWith("/dashboard/sync-conflicts")
+    pathname.startsWith("/dashboard/sync-conflicts") ||
+    pathname.startsWith("/dashboard/account")
   )
 }
 

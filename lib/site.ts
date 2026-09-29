@@ -9,6 +9,14 @@ export const APP_TAGLINE = 'Business Inventory & Value Assistant'
 export const APP_DEFAULT_DESCRIPTION =
   'Inventory and point-of-sale for small businesses in Sierra Leone. Track stock, sell offline, print receipts.'
 
+/** Wordmark in /public (login, marketing). */
+export const APP_LOGO_SRC = '/biva-logo.jpg'
+
+/** PWA / browser chrome (matches logo blue). */
+export const APP_THEME_COLOR = '#0055FF'
+
+export const APP_BACKGROUND_COLOR = '#ffffff'
+
 /** Public-facing site name and legal contact (override via env). */
 export function getAppDisplayName() {
   return process.env.APP_NAME?.trim() || APP_SHORT_NAME

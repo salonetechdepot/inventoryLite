@@ -137,7 +137,8 @@ Mark: Pass | Fail | Skip | N/A
 ## 5. Known limits
 
 - Browser print depends on **58mm paper settings** in the print dialog.
-- **Account** tab needs internet.
-- **Day close save** needs internet.
+- **Account** branding saves online only; other account tools work offline.
+- **Day close** can be saved offline and syncs with the queue when online.
+- **Sync conflicts**: use Try again when online; dismiss refreshes cache from server.
 - Offline sales sync when connection returns.
 - Handheld Sunmi/BT printers may need PNG share or native printer app instead of browser print.

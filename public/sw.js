@@ -1,4 +1,4 @@
-const SW_VERSION = "v8"
+const SW_VERSION = "v9"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
 const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
@@ -16,7 +16,7 @@ const DASHBOARD_SHELL_FALLBACKS = [
 const PRECACHE_URLS = [
   "/login",
   OFFLINE_FALLBACK_URL,
-  "/icon.svg",
+  "/biva-logo.jpg",
   "/manifest.webmanifest",
 ]
 

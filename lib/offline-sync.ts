@@ -13,6 +13,20 @@ import {
   RECEIPT_HISTORY_CAP,
   type ReceiptIncoming,
 } from "@/lib/sync-merge"
+import {
+  buildCloseSnapshot,
+  emptyMethodTotals,
+  formatBusinessDateLabel,
+  getBusinessDateKey,
+  normalizeMethodTotals,
+  roundMoney,
+  sumMethodTotals,
+  type MethodTotals,
+} from "@/lib/day-close"
+import {
+  isStaleProductMutation,
+  mergeSyncHeaders,
+} from "@/lib/sync-conflict-recovery"
 
 const DB_NAME = "biva-offline-db"
 const DB_VERSION = 1
@@ -744,6 +758,25 @@ async function applyBatchReceiptCacheResolution(
   return null
 }
 
+async function applyDayCloseCacheResolution(mutation: QueuedMutation, response: Response) {
+  if (mutation.url !== "/api/day-close" || mutation.method !== "POST") return
+  try {
+    const data = (await response.clone().json()) as { close?: Record<string, unknown> }
+    if (!data?.close) return
+    const dateKey = String(data.close.business_date ?? "")
+    if (!dateKey) return
+    const cacheKey = `/api/day-close?date=${dateKey}`
+    const cached = await getCachedData<Record<string, unknown>>(cacheKey)
+    await cacheData(cacheKey, {
+      ...(cached ?? {}),
+      existing_close: data.close,
+      _offline: false,
+    })
+  } catch {
+    // ignore
+  }
+}
+
 async function applyPaymentCacheResolution(mutation: QueuedMutation, response: Response) {
   const receiptId = parseReceiptPaymentUrl(mutation.url)
   if (!receiptId || mutation.method !== "POST") return
@@ -921,6 +954,80 @@ async function applyOptimisticProductMutation(input: {
     return {}
   }
 
+  if (input.url === "/api/day-close" && input.method === "POST") {
+    const dateKey = String(payload.businessDate ?? getBusinessDateKey())
+    const cacheKey = `/api/day-close?date=${dateKey}`
+    const current = await getCachedData<{
+      business_date: string
+      business_date_label: string
+      expected_by_method: MethodTotals
+      expected_cash: number
+      expected_total: number
+      change_given_total: number
+      sale_count: number
+      return_count: number
+      payment_count: number
+      existing_close: Record<string, unknown> | null
+      recent_closes: unknown[]
+      _offline?: boolean
+    }>(cacheKey)
+
+    const expectedByMethod = normalizeMethodTotals(
+      current?.expected_by_method ?? emptyMethodTotals()
+    )
+    const countedInput: MethodTotals = { ...expectedByMethod }
+    const fromBody = normalizeMethodTotals(
+      (payload.countedByMethod as MethodTotals | undefined) ?? {}
+    )
+    for (const [method, value] of Object.entries(fromBody)) {
+      countedInput[method as keyof MethodTotals] = value
+    }
+    if (payload.countedCash !== undefined) {
+      countedInput.cash = roundMoney(Number(payload.countedCash) || 0)
+    }
+
+    const snapshot = buildCloseSnapshot({ expectedByMethod, countedByMethod: countedInput })
+    const now = new Date().toISOString()
+
+    const existing_close = {
+      id: `local-close-${dateKey}`,
+      business_date: dateKey,
+      business_date_label: formatBusinessDateLabel(dateKey),
+      expected_by_method: snapshot.expectedByMethod,
+      counted_by_method: snapshot.countedByMethod,
+      expected_cash: snapshot.expectedCash,
+      counted_cash: snapshot.countedCash,
+      cash_variance: snapshot.cashVariance,
+      expected_total: snapshot.expectedTotal,
+      counted_total: snapshot.countedTotal,
+      total_variance: snapshot.totalVariance,
+      change_given_total: current?.change_given_total ?? 0,
+      sale_count: current?.sale_count ?? 0,
+      return_count: current?.return_count ?? 0,
+      payment_count: current?.payment_count ?? 0,
+      notes: typeof payload.notes === "string" ? payload.notes : null,
+      closed_at: now,
+      _pendingSync: true,
+    }
+
+    await cacheData(cacheKey, {
+      business_date: dateKey,
+      business_date_label: formatBusinessDateLabel(dateKey),
+      expected_by_method: expectedByMethod,
+      expected_cash: roundMoney(expectedByMethod.cash || 0),
+      expected_total: roundMoney(sumMethodTotals(expectedByMethod)),
+      change_given_total: current?.change_given_total ?? 0,
+      sale_count: current?.sale_count ?? 0,
+      return_count: current?.return_count ?? 0,
+      payment_count: current?.payment_count ?? 0,
+      existing_close,
+      recent_closes: current?.recent_closes ?? [],
+      _offline: true,
+    })
+
+    return { tempId: dateKey }
+  }
+
   return {}
 }
 
@@ -1068,6 +1175,37 @@ export async function dismissConflict(id: string) {
   await deleteFromStore(CONFLICT_STORE, id)
 }
 
+/** Dismiss and pull server truth into offline cache (online only). */
+export async function dismissConflictAndReconcile(id: string) {
+  await dismissConflict(id)
+  if (isBrowser() && navigator.onLine) {
+    await runDeltaSync()
+  }
+}
+
+/** Re-queue a failed mutation and sync again — only when online; offline queue unchanged. */
+export async function retrySyncConflict(
+  conflictId: string
+): Promise<SyncQueueResult | { ok: false; reason: string }> {
+  if (!isBrowser()) return { ok: false, reason: "Not in browser" }
+  if (!navigator.onLine) {
+    return { ok: false, reason: "Connect to the internet to retry sync." }
+  }
+  const conflicts = await listConflicts()
+  const conflict = conflicts.find((row) => row.id === conflictId)
+  if (!conflict) return { ok: false, reason: "Conflict not found." }
+
+  await enqueueMutation({
+    url: conflict.url,
+    method: conflict.method,
+    body: conflict.payload,
+    headers: {},
+  })
+  await dismissConflict(conflictId)
+  const result = await processOfflineQueue()
+  return result
+}
+
 async function enqueueMutation(mutation: Omit<QueuedMutation, "id" | "createdAt" | "retryCount">) {
   await putIntoStore(QUEUE_STORE, {
     ...mutation,
@@ -1102,13 +1240,6 @@ function shouldTreatAsSuccess(mutation: QueuedMutation, status: number) {
 /** Client/validation errors won't succeed on retry — surface immediately. */
 function isPermanentSyncFailure(status: number) {
   return status === 400 || status === 401 || status === 403 || status === 404
-}
-
-function mutationFetchHeaders(mutation: QueuedMutation): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    ...(mutation.headers ?? {}),
-  }
 }
 
 async function readApiError(response: Response): Promise<string> {
@@ -1449,10 +1580,10 @@ export async function sendOrQueueMutation(input: {
     const body = remapIdsInBody(input.body, {})
     const response = await fetch(input.url, {
       method: input.method,
-      headers: {
-        "Content-Type": "application/json",
-        ...(input.headers ?? {}),
-      },
+      headers: mergeSyncHeaders(
+        { url: input.url, method: input.method, headers: input.headers },
+        body
+      ),
       credentials: "same-origin",
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -1477,6 +1608,21 @@ export async function sendOrQueueMutation(input: {
 
     if (parseReceiptPaymentUrl(input.url) && input.method === "POST") {
       await applyPaymentCacheResolution(
+        {
+          id: "live",
+          url: input.url,
+          method: input.method,
+          body: input.body,
+          headers: input.headers,
+          createdAt: Date.now(),
+          retryCount: 0,
+        },
+        response
+      )
+    }
+
+    if (input.url === "/api/day-close" && input.method === "POST") {
+      await applyDayCloseCacheResolution(
         {
           id: "live",
           url: input.url,
@@ -1539,7 +1685,7 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
     try {
       const res = await fetch(mappedUrl, {
         method: mutation.method,
-        headers: mutationFetchHeaders(mutation),
+        headers: mergeSyncHeaders({ ...mutation, url: mappedUrl }, mappedBody),
         credentials: "same-origin",
         body: mappedBody ? JSON.stringify(mappedBody) : undefined,
       })
@@ -1552,9 +1698,13 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
           { ...mutation, url: mappedUrl },
           res
         )
+        await applyDayCloseCacheResolution({ ...mutation, url: mappedUrl }, res)
         const createdMap = await applyCreateSyncResolution(mutation, res)
         if (createdMap) Object.assign(tempIdMap, createdMap)
         synced += 1
+      } else if (isStaleProductMutation({ ...mutation, url: mappedUrl }, res.status)) {
+        await deleteFromStore(QUEUE_STORE, mutation.id)
+        await runDeltaSync()
       } else if (isConflictStatus(res.status) || isPermanentSyncFailure(res.status)) {
         const reason = await readApiError(res)
         lastError = reason

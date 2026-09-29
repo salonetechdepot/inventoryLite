@@ -10,8 +10,9 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
 import {
   clearConflicts,
-  dismissConflict,
+  dismissConflictAndReconcile,
   listConflicts,
+  retrySyncConflict,
   type SyncConflict,
 } from "@/lib/offline-sync"
 import {
@@ -36,9 +37,27 @@ export default function SyncConflictsPage() {
   }, [refresh])
 
   const handleDismiss = async (id: string) => {
-    await dismissConflict(id)
+    await dismissConflictAndReconcile(id)
     await refresh()
-    toast({ title: "Conflict dismissed" })
+    toast({ title: "Conflict dismissed", description: "Local cache refreshed from server." })
+  }
+
+  const handleRetry = async (id: string) => {
+    const result = await retrySyncConflict(id)
+    await refresh()
+    if (result && "ok" in result && result.ok === false) {
+      toast({ title: "Could not retry", description: result.reason, variant: "destructive" })
+      return
+    }
+    if (result && "conflicts" in result && result.conflicts > 0) {
+      toast({
+        title: "Still blocked",
+        description: "Fix the issue (e.g. stock) and try again, or dismiss.",
+        variant: "destructive",
+      })
+      return
+    }
+    toast({ title: "Synced", description: "Change applied on the server." })
   }
 
   const handleDismissAll = async () => {
@@ -88,7 +107,12 @@ export default function SyncConflictsPage() {
               stale edit — refresh Products and try again.
             </li>
             <li>
-              Dismissing removes the local record only. It does not undo server data.
+              <strong>Try again</strong> re-sends the change when online (safe for day close and
+              payments). Sales may fail again if stock is still short.
+            </li>
+            <li>
+              <strong>Dismiss</strong> clears the alert and refreshes products and receipts from
+              the server. Offline sales still work; this only runs when you are online.
             </li>
           </ul>
         </CardContent>
@@ -136,14 +160,23 @@ export default function SyncConflictsPage() {
                       <p className="text-xs rounded-md bg-destructive/10 text-destructive p-2">
                         {conflict.reason}
                       </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => void handleDismiss(conflict.id)}
-                      >
-                        Dismiss
-                      </Button>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => void handleRetry(conflict.id)}
+                        >
+                          Try again
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => void handleDismiss(conflict.id)}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 </li>

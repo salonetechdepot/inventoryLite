@@ -53,12 +53,6 @@ export default function DashboardLayout({
     }
   }, [user, isLoading, accountLocked, sessionExpired, router, isOffline])
 
-  useEffect(() => {
-    if (isOffline && pathname?.startsWith("/dashboard/account")) {
-      router.replace("/dashboard")
-    }
-  }, [isOffline, pathname, router])
-
   if (isLoading && !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">

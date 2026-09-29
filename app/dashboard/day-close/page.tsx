@@ -29,6 +29,7 @@ import {
   type DayClosePayload,
 } from "@/lib/day-close-client"
 import { isBrowserOffline } from "@/lib/offline-navigation"
+import { sendOrQueueMutation } from "@/lib/offline-sync"
 import { paymentMethodLabel } from "@/lib/payment-methods"
 import { cn } from "@/lib/utils"
 
@@ -134,14 +135,6 @@ export default function DayClosePage() {
 
   const handleSave = async () => {
     if (!data) return
-    if (showOfflinePreview || isOffline) {
-      toast({
-        title: "Connect to save",
-        description: "Day close must be saved online. You can count your till now and save when back online.",
-        variant: "destructive",
-      })
-      return
-    }
     if (countedCash === "" || Number.isNaN(Number(countedCash))) {
       toast({
         title: "Enter counted cash",
@@ -165,12 +158,40 @@ export default function DayClosePage() {
         notes: notes.trim() || null,
       }
 
-      const res = await fetch("/api/day-close", {
+      const { queued, response, conflict } = await sendOrQueueMutation({
+        url: "/api/day-close",
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
+        body,
       })
+
+      if (queued) {
+        toast({
+          title: "Day close saved offline",
+          description: "Counts are on this device and will sync when you are back online.",
+        })
+        await mutate()
+        return
+      }
+
+      if (conflict) {
+        toast({
+          title: "Could not save day close",
+          description: "Check Account → Sync conflicts after you reconnect.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const res = response
+      if (!res) {
+        toast({
+          title: "Could not reach the server",
+          description: "Try again when you have a connection.",
+          variant: "destructive",
+        })
+        return
+      }
+
       const json = await res.json()
       if (!res.ok) {
         toast({
@@ -193,8 +214,8 @@ export default function DayClosePage() {
       await mutate()
     } catch {
       toast({
-        title: "Could not reach the server",
-        description: "Day close needs an internet connection.",
+        title: "Could not save day close",
+        description: "Try again.",
         variant: "destructive",
       })
     } finally {
@@ -241,8 +262,8 @@ export default function DayClosePage() {
             <p className="font-medium text-warning-foreground">Offline preview</p>
             <p className="text-muted-foreground mt-0.5">
               Expected totals come from cached sales on this device, including any
-              sales not yet synced. Count your till below, then save when you have
-              internet.
+              sales not yet synced. Count your till below — you can save offline;
+              it will sync when you reconnect.
             </p>
           </div>
         </div>
@@ -466,23 +487,19 @@ export default function DayClosePage() {
 
               <Button
                 className="w-full h-12 text-base font-semibold"
-                disabled={saving || isLoading || showOfflinePreview}
+                disabled={saving || isLoading}
                 onClick={handleSave}
               >
                 {saving
                   ? "Saving..."
                   : showOfflinePreview
-                    ? "Connect to save close"
+                    ? data.existing_close
+                      ? "Update close (sync later)"
+                      : "Save close (sync later)"
                     : data.existing_close
                       ? "Update day close"
                       : "Close day"}
               </Button>
-              {showOfflinePreview && (
-                <p className="text-xs text-center text-muted-foreground">
-                  Saving needs an internet connection. Your count is kept on this
-                  screen until you reconnect.
-                </p>
-              )}
             </CardContent>
           </Card>
 

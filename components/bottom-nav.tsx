@@ -1,10 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { Home, Package, ShoppingCart, Receipt, Undo2, User } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { isBrowserOffline } from "@/lib/offline-navigation"
 
 const navItems = [
   { href: "/dashboard", label: "Home", icon: Home },
@@ -12,27 +10,14 @@ const navItems = [
   { href: "/dashboard/sell", label: "Sell", icon: ShoppingCart },
   { href: "/dashboard/sales", label: "History", icon: Receipt },
   { href: "/dashboard/returns", label: "Returns", icon: Undo2 },
-  { href: "/dashboard/account", label: "Account", icon: User, onlineOnly: true },
+  { href: "/dashboard/account", label: "Account", icon: User },
 ]
 
 export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
-  const [isOffline, setIsOffline] = useState(false)
 
-  useEffect(() => {
-    const sync = () => setIsOffline(isBrowserOffline())
-    sync()
-    window.addEventListener("online", sync)
-    window.addEventListener("offline", sync)
-    return () => {
-      window.removeEventListener("online", sync)
-      window.removeEventListener("offline", sync)
-    }
-  }, [])
-
-  const navigate = (href: string, onlineOnly?: boolean) => {
-    if (onlineOnly && isOffline) return
+  const navigate = (href: string) => {
     if (pathname === href) return
     router.push(href)
   }
@@ -44,27 +29,11 @@ export function BottomNav() {
           const isActive =
             pathname === item.href ||
             (item.href !== "/dashboard" && pathname.startsWith(item.href))
-          const disabled = Boolean(item.onlineOnly && isOffline)
-
-          if (disabled) {
-            return (
-              <span
-                key={item.href}
-                title="Account needs an internet connection"
-                className="flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl text-muted-foreground/40 cursor-not-allowed"
-                aria-disabled="true"
-              >
-                <item.icon className="size-6" />
-                <span className="text-xs font-medium">{item.label}</span>
-              </span>
-            )
-          }
-
           return (
             <button
               key={item.href}
               type="button"
-              onClick={() => navigate(item.href, item.onlineOnly)}
+              onClick={() => navigate(item.href)}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl transition-colors",
                 isActive

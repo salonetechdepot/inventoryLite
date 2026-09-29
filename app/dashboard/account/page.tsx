@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   User,
@@ -25,7 +24,6 @@ import { useAuth } from "@/hooks/use-auth"
 import { getConflictCount } from "@/lib/offline-sync"
 
 export default function AccountPage() {
-  const router = useRouter()
   const { user, logout, mutate, sessionExpiresAt } = useAuth()
   const [isOffline, setIsOffline] = useState(false)
   const [themeColor, setThemeColor] = useState(user?.theme_color || "#2E8B57")
@@ -50,10 +48,6 @@ export default function AccountPage() {
       window.removeEventListener("offline", sync)
     }
   }, [])
-
-  useEffect(() => {
-    if (isOffline) router.replace("/dashboard")
-  }, [isOffline, router])
 
   useEffect(() => {
     if (!user) return
@@ -87,32 +81,23 @@ export default function AccountPage() {
     }
   }
 
-  if (isOffline) {
-    return (
-      <main className="p-4">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold">My Account</h1>
-        </header>
-        <Card>
-          <CardContent className="p-6 text-center space-y-2">
-            <p className="font-medium">Account is unavailable offline</p>
-            <p className="text-sm text-muted-foreground">
-              Connect to the internet to update settings or sign out.
-            </p>
-            <Button className="mt-2" onClick={() => router.replace("/dashboard")}>
-              Back to home
-            </Button>
-          </CardContent>
-        </Card>
-      </main>
-    )
-  }
-
   return (
     <main className="p-4">
       <header className="mb-6">
         <h1 className="text-2xl font-bold">My Account</h1>
       </header>
+
+      {isOffline ? (
+        <Card className="mb-4 border-warning/30 bg-warning/5">
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">You&apos;re offline</p>
+            <p className="mt-1">
+              You can open tools below and sign out. Branding changes save when you&apos;re back
+              online.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card className="mb-6">
         <CardContent className="p-4">
@@ -257,8 +242,8 @@ export default function AccountPage() {
               />
               <FieldDescription>Shown on receipts and your account.</FieldDescription>
             </Field>
-            <Button onClick={saveSettings} disabled={saving}>
-              {saving ? "Saving…" : "Save branding"}
+            <Button onClick={saveSettings} disabled={saving || isOffline}>
+              {saving ? "Saving…" : isOffline ? "Save when online" : "Save branding"}
             </Button>
           </FieldGroup>
         </CardContent>
