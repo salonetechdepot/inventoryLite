@@ -2,19 +2,13 @@
 
 import { useEffect } from "react"
 
-function isLocalhost() {
-  return (
-    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-  )
-}
-
 export function PwaProvider() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return
 
-    // Skip SW in dev on non-localhost (avoids stale chunk cache on LAN IPs).
-    if (process.env.NODE_ENV !== "production" && !isLocalhost()) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => {
+    // Never register a service worker in dev — it caches routes and breaks Turbopack/HMR.
+    if (process.env.NODE_ENV !== "production") {
+      void navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((registration) => void registration.unregister())
       })
       return
