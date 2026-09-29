@@ -2,11 +2,12 @@ import type { Metadata, Viewport } from 'next'
 import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from '@/components/ui/toaster'
 import { PwaProvider } from '@/components/pwa-provider'
+import { APP_DEFAULT_DESCRIPTION, APP_FULL_NAME } from '@/lib/site'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'BIVA - Simple Inventory for Sierra Leone SMEs',
-  description: 'Easy inventory management for small businesses in Sierra Leone. Track products, manage stock, record sales.',
+  title: APP_FULL_NAME,
+  description: APP_DEFAULT_DESCRIPTION,
   generator: 'sbm',
   icons: {
     icon: [

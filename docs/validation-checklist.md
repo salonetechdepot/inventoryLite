@@ -1,6 +1,6 @@
-# StockEasy — Validation Plan & Checklist (v1)
+# BIVA — Validation Plan & Checklist (v1)
 
-**App:** StockEasy — Simple Inventory for Sierra Leone SMEs  
+**App:** BIVA — Business Inventory & Value Assistant (Sierra Leone SMEs)  
 **Currency:** NLe  
 **Use:** Before go-live and after major updates (receipts, barcodes, offline, day close)
 

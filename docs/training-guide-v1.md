@@ -1,4 +1,4 @@
-# StockEasy — Training Guide (Step by Step, v1)
+# BIVA — Training Guide (Step by Step, v1)
 
 **Audience:** New cashier or shop staff  
 **Duration:** ~45–60 minutes hands-on  
@@ -13,9 +13,9 @@ Add screenshots from your shop device when turning this into a printed booklet.
 ### 1.1 Open the app
 
 1. Open Chrome on phone/tablet.
-2. Go to your StockEasy link.
+2. Go to your BIVA link.
 3. **Add to Home Screen** when prompted (recommended).
-4. Open StockEasy from home screen icon.
+4. Open BIVA from home screen icon.
 
 ### 1.2 Sign in
 
@@ -80,7 +80,7 @@ Add screenshots from your shop device when turning this into a printed booklet.
 2. Point camera at product barcode.
 3. Product should jump into cart.
 
-**Important:** Scanner matches **exact scan code** stored in StockEasy — not product name.
+**Important:** Scanner matches **exact scan code** stored in BIVA — not product name.
 
 ### 3.2 When scan fails
 
@@ -185,7 +185,7 @@ Trainee can do alone without help:
 ## Quick reference card (print and tape at counter)
 
 ```
-STOCKEASY — DAILY QUICK STEPS
+BIVA — DAILY QUICK STEPS
 1. Sell → tap/scan items → Checkout → pay → Print receipt
 2. Return → History → pick sale → Return
 3. No internet? → still sell; syncs later

@@ -7,7 +7,7 @@ import { getAppDisplayName, getPrivacyContactEmail } from '@/lib/site'
 
 export const metadata: Metadata = {
   title: `Privacy Policy | ${getAppDisplayName()}`,
-  description: 'How StockEasy collects, uses, and protects your information.',
+  description: 'How BIVA collects, uses, and protects your information.',
 }
 
 function Section({

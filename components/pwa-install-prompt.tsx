@@ -12,6 +12,7 @@ import {
   isIosSafari,
   setInstallPromptState,
 } from "@/lib/pwa-install"
+import { getAppDisplayName } from "@/lib/site"
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -19,6 +20,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export function PwaInstallPrompt() {
+  const appName = getAppDisplayName()
   const [visible, setVisible] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [platform, setPlatform] = useState(detectInstallPlatform())
@@ -84,7 +86,7 @@ export function PwaInstallPrompt() {
     }
 
     toast({
-      title: "Install StockEasy",
+      title: `Install ${appName}`,
       description: "Use the install icon in your browser address bar, or the browser menu → Install app.",
     })
   }
@@ -105,14 +107,14 @@ export function PwaInstallPrompt() {
         </div>
         <div className="flex-1 min-w-0">
           <p id="pwa-install-title" className="text-sm font-semibold">
-            Install StockEasy
+            Install {appName}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             {hasNative
-              ? "Add StockEasy to your home screen for quick access and offline use."
+              ? `Add ${appName} to your home screen for quick access and offline use.`
               : platform === "ios"
-                ? "Install StockEasy on this iPhone for offline access."
-                : "Install StockEasy on this device for quick access and offline use."}
+                ? `Install ${appName} on this iPhone for offline access.`
+                : `Install ${appName} on this device for quick access and offline use.`}
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <Button size="sm" onClick={handleInstall}>

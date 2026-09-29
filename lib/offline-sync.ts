@@ -14,7 +14,7 @@ import {
   type ReceiptIncoming,
 } from "@/lib/sync-merge"
 
-const DB_NAME = "stockeasy-offline-db"
+const DB_NAME = "biva-offline-db"
 const DB_VERSION = 1
 const CACHE_STORE = "cache"
 const QUEUE_STORE = "queue"
@@ -45,7 +45,7 @@ export const OFFLINE_BACKGROUND_REFRESH_MS = 180_000
 
 export const SYNC_CURSOR_CACHE_KEY = "__sync_cursor__"
 
-const SESSION_LOCAL_KEY = "stockeasy-session-user-v1"
+const SESSION_LOCAL_KEY = "biva-session-user-v1"
 
 const EMPTY_DASHBOARD_STATS = {
   stats: {
@@ -1120,8 +1120,8 @@ async function readApiError(response: Response): Promise<string> {
   }
 }
 
-export const OFFLINE_SYNC_COMPLETE_EVENT = "stockeasy-offline-sync-complete"
-export const OFFLINE_CACHE_REFRESHED_EVENT = "stockeasy-offline-cache-refreshed"
+export const OFFLINE_SYNC_COMPLETE_EVENT = "biva-offline-sync-complete"
+export const OFFLINE_CACHE_REFRESHED_EVENT = "biva-offline-cache-refreshed"
 
 export type OfflineCacheRefreshResult = {
   refreshed: number

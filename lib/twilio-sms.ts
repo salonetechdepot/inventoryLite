@@ -1,7 +1,9 @@
 import { mapTwilioSendError } from '@/lib/auth-provider-errors'
 
+import { APP_SHORT_NAME } from '@/lib/site'
+
 function appName() {
-  return process.env.APP_NAME?.trim() || 'StockEasy'
+  return process.env.APP_NAME?.trim() || APP_SHORT_NAME
 }
 
 /**

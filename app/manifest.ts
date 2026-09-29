@@ -1,11 +1,12 @@
 import type { MetadataRoute } from "next"
+import { APP_DEFAULT_DESCRIPTION, APP_SHORT_NAME, APP_TAGLINE } from "@/lib/site"
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "BIVA",
-    short_name: "BIVA",
-    description: "Simple inventory management for Sierra Leone SMEs.",
+    name: `${APP_SHORT_NAME} — ${APP_TAGLINE}`,
+    short_name: APP_SHORT_NAME,
+    description: APP_DEFAULT_DESCRIPTION,
     start_url: "/dashboard",
     scope: "/",
     display: "standalone",

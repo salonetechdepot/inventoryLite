@@ -1,0 +1,20 @@
+# Render Blueprint — BIVA (optional; you can also configure manually in the dashboard)
+services:
+  - type: web
+    name: biva
+    runtime: node
+    buildCommand: node scripts/vercel-build.mjs
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: API_URL
+        sync: false
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      - key: APP_NAME
+        value: BIVA

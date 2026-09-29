@@ -371,7 +371,7 @@ export default function AdminUsersPage() {
             <AlertDialogDescription>
               This permanently removes the account, products, sales, receipts, and
               payments for <strong>{deleteTarget?.email}</strong>. They will need to
-              register again to use StockEasy. This cannot be undone.
+              register again to use BIVA. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

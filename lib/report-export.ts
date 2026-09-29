@@ -30,9 +30,9 @@ export function buildAnalyticsCsv(
 ): string {
   const lines: string[] = []
   const generated = new Date().toLocaleString("en-GB")
-  const shop = businessName?.trim() || "StockEasy"
+  const shop = businessName?.trim() || "BIVA"
 
-  lines.push(`StockEasy Report,${csvEscape(shop)}`)
+  lines.push(`BIVA Report,${csvEscape(shop)}`)
   lines.push(`Generated,${csvEscape(generated)}`)
   lines.push("")
 
@@ -106,7 +106,7 @@ export function downloadAnalyticsCsv(
 ) {
   const csv = buildAnalyticsCsv(data, businessName)
   const date = new Date().toISOString().slice(0, 10)
-  const slug = (businessName || "stockeasy")
+  const slug = (businessName || "biva")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
@@ -170,7 +170,7 @@ export function printAnalyticsReport(
   @media print { body { padding: 12px; } }
 </style></head><body>
   <h1>${shop}</h1>
-  <p class="meta">StockEasy sales report · Generated ${generated}</p>
+  <p class="meta">BIVA sales report · Generated ${generated}</p>
 
   <div class="grid">
     <div class="tile"><label>Today (net)</label><strong>NLe ${formatMoney(data.revenue.today.amount)}</strong></div>

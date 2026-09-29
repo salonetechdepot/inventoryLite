@@ -1,4 +1,5 @@
 import { mapResendSendError } from '@/lib/auth-provider-errors'
+import { APP_SHORT_NAME } from '@/lib/site'
 
 /**
  * Send OTP via Resend (https://resend.com/docs/api-reference/emails/send-email)
@@ -20,7 +21,7 @@ export async function sendEmailOtp(  to: string,
     }
   }
 
-  const appName = process.env.APP_NAME || 'Simple Inventory'
+  const appName = process.env.APP_NAME || APP_SHORT_NAME
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',

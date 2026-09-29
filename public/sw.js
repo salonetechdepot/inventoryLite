@@ -1,6 +1,6 @@
-const SW_VERSION = "v7"
-const STATIC_CACHE = `stockeasy-static-${SW_VERSION}`
-const RUNTIME_CACHE = `stockeasy-runtime-${SW_VERSION}`
+const SW_VERSION = "v8"
+const STATIC_CACHE = `biva-static-${SW_VERSION}`
+const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
 const DASHBOARD_SHELL_FALLBACKS = [
@@ -28,7 +28,7 @@ function offlineHtml() {
   return caches.match(OFFLINE_FALLBACK_URL).then((cached) => {
     if (cached) return cached
     return new Response(
-      '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title></head><body style="font-family:system-ui,sans-serif;padding:24px;text-align:center"><p>StockEasy is offline. Open the app once while online, then try again.</p></body></html>',
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title></head><body style="font-family:system-ui,sans-serif;padding:24px;text-align:center"><p>BIVA is offline. Open the app once while online, then try again.</p></body></html>',
       { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
     )
   })

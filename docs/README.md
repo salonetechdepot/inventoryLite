@@ -1,6 +1,6 @@
-# StockEasy shop documentation
+# BIVA shop documentation
 
-Go-live, validation, and training materials for StockEasy pilots.
+Go-live, validation, and training materials for BIVA pilots.
 
 ## Files
 

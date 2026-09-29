@@ -1,4 +1,4 @@
-# StockEasy — Standard Operating Procedures (SOP v1)
+# BIVA — Standard Operating Procedures (SOP v1)
 
 **Who uses this:** Shop owner, cashier, stock keeper  
 **When:** Every working day  
@@ -18,7 +18,7 @@
 
 ## 2. Daily opening
 
-1. Open StockEasy (home screen app if installed).
+1. Open BIVA (home screen app if installed).
 2. Confirm you are **signed in** (sign in online at least once per day if session expired).
 3. Check **internet** if you need Account, day close, or first-time product load.
 4. Quick check **Products** — fast-moving items show correct stock.
@@ -44,7 +44,7 @@
 **Rules:**
 
 - Always print or show receipt for paid sales.
-- Do not sell without recording in StockEasy.
+- Do not sell without recording in BIVA.
 - If scanner fails, use **search by name**.
 
 ---
@@ -91,7 +91,7 @@
 
 **Rules:**
 
-- Every product sold in the shop should exist in StockEasy.
+- Every product sold in the shop should exist in BIVA.
 - One scan code per product — no duplicates.
 
 ---

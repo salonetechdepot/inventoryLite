@@ -173,7 +173,7 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: "stockeasy-auth-v3",
+      name: "biva-auth-v1",
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

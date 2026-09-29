@@ -9,9 +9,9 @@ export type PosSettings = {
   scanBeep: boolean
 }
 
-const STORAGE_KEY = 'stockeasy-pos-settings-v1'
+const STORAGE_KEY = 'biva-pos-settings-v1'
 
-export const POS_SETTINGS_CHANGED = 'stockeasy-pos-settings-changed'
+export const POS_SETTINGS_CHANGED = 'biva-pos-settings-changed'
 
 const DEFAULTS: PosSettings = {
   hardwareScanner: true,

@@ -7,7 +7,7 @@ import { Shield, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export const metadata: Metadata = {
-  title: 'StockEasy Operator',
+  title: 'BIVA Operator',
   robots: { index: false, follow: false },
 }
 
@@ -32,7 +32,7 @@ export default async function AdminLayout({
           <div className="flex items-center gap-2">
             <Shield className="size-5 text-primary" />
             <div>
-              <p className="font-semibold">StockEasy Operator Console</p>
+              <p className="font-semibold">BIVA Operator Console</p>
               <p className="text-xs text-muted-foreground">
                 Developer / platform control · {session.email}
               </p>

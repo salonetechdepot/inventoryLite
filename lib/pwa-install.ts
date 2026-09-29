@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'stockeasy-install-prompt-v1'
+const STORAGE_KEY = 'biva-install-prompt-v1'
 
 export type InstallPromptState = 'dismissed' | 'installed'
 

@@ -1,8 +1,8 @@
-# StockEasy — Software Validation Protocol (v1)
+# BIVA — Software Validation Protocol (v1)
 
 | Field | Value |
 |-------|--------|
-| **System** | StockEasy — Simple Inventory for Sierra Leone SMEs |
+| **System** | BIVA — Business Inventory & Value Assistant |
 | **Document type** | Software validation protocol |
 | **Version** | 1.0 |
 | **Related documents** | [validation-checklist.md](./validation-checklist.md), [sop-v1.md](./sop-v1.md), [training-guide-v1.md](./training-guide-v1.md) |
@@ -11,7 +11,7 @@
 
 ## 1. Purpose
 
-This protocol defines **how** StockEasy is validated before go-live and after significant changes. It ensures the system meets business requirements for sales, inventory, receipts, offline use, and end-of-day controls in a real shop environment.
+This protocol defines **how** BIVA is validated before go-live and after significant changes. It ensures the system meets business requirements for sales, inventory, receipts, offline use, and end-of-day controls in a real shop environment.
 
 The detailed test cases live in the **[Validation checklist](./validation-checklist.md)**. This protocol governs planning, execution, evidence, and approval.
 
@@ -138,7 +138,7 @@ Optional but recommended: barcode/labels (C), analytics (not in checklist — ad
 
 1. While **online**: open **Sell**, **Products**, **History** (warms cache).
 2. Enable airplane mode or DevTools → Offline.
-3. Execute **G1–G3** and complete a sale (receipt should show; no generic “StockEasy is offline” full-page replace during checkout).
+3. Execute **G1–G3** and complete a sale (receipt should show; no generic “BIVA is offline” full-page replace during checkout).
 4. Restore network; verify sync (G2), resolve conflicts if any (G4).
 
 ### Phase D — Production vs localhost parity

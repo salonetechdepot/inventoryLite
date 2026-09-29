@@ -38,7 +38,7 @@ export function ReceiptReferenceQr({ receiptId, className, size = 72 }: Props) {
 
   if (!QrCode || !receiptId.trim()) return null
 
-  const payload = `stockeasy:receipt:${receiptId.trim()}`
+  const payload = `biva:receipt:${receiptId.trim()}`
 
   return (
     <div className={cn("receipt-reference-qr flex flex-col items-center gap-1", className)}>
