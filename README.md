@@ -14,14 +14,19 @@ Inventory and point-of-sale for small businesses in Sierra Leone. Works online a
 
 2. Set `DATABASE_URL`, `JWT_SECRET`, and auth provider keys in `.env`.
 
-3. Install dependencies and apply migrations:
+3. Install dependencies and point `DATABASE_URL` at the **shared main-app** database (same Neon DB as premium).
+
+4. Apply lite extension tables once (if not already applied):
 
 ```bash
 pnpm install
-pnpm exec prisma migrate deploy
+Get-Content prisma/migrations/20260720120000_shared_main_db_lite/migration.sql | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+pnpm exec prisma generate
 ```
 
-4. Start the dev server:
+Do **not** run legacy `prisma migrate deploy` against the shared DB unless your team has baselined Prisma migration history.
+
+5. Start the dev server:
 
 ```bash
 pnpm dev
@@ -72,7 +77,7 @@ The build script runs `prisma generate`, `prisma migrate deploy`, then `next bui
 | `API_URL` | Full Login URL, e.g. `https://host/api/Login` |
 | `NEXT_PUBLIC_API_URL` | Same URL for the browser |
 
-Login requires **SuperAdmin** role, an **active subscription**, and module id `22222222-2222-2222-2222-222222222203` (Lite Inventory System). Inventory rows are scoped by `tenant_id` from the login token.
+Login requires **SuperAdmin** role, an **active subscription**, and module id `22222222-2222-2222-2222-222222222203` (Lite Inventory System). Data is scoped by `tenant_id` from the login token and stored on the main app database: `tenants`, `products`, `stock_levels`, `retail_receipts` / `retail_sales` / `retail_payments`, plus lite extension tables (`retail_tenant_settings`, `retail_category_meta`, `retail_product_meta`, `idempotency_keys`, `day_closes`).
 
 ### Operator console (developer only)
 

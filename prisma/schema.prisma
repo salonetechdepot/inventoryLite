@@ -7,154 +7,241 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Shop branding / profile for an external-auth tenant (no local User table).
-model TenantSettings {
-  tenantId     String   @id @map("tenant_id") @db.Uuid
-  email        String?  @db.VarChar(255)
-  phoneE164    String?  @map("phone_e164") @db.VarChar(20)
-  businessName String?  @map("business_name") @db.VarChar(255)
-  themeColor   String?  @map("theme_color") @db.VarChar(20)
-  shopLogoUrl  String?  @map("shop_logo_url") @db.VarChar(500)
-  isLocked     Boolean  @default(false) @map("is_locked")
-  lockedAt     DateTime? @map("locked_at") @db.Timestamp(6)
-  lockedReason String?  @map("locked_reason") @db.VarChar(500)
-  lockedBy     String?  @map("locked_by") @db.VarChar(255)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+/// Main-app tenant (Roarbyte / premium).
+model Tenant {
+  id        String   @id @db.VarChar(64)
+  name      String   @db.VarChar(200)
+  slug      String   @unique @db.VarChar(160)
+  email     String?
+  phone     String?
+  imageUrl  String?  @map("image_url")
+  themeColor    String?  @map("theme_color") @db.VarChar(20)
+  companyCode   String   @default("") @map("company_code") @db.VarChar(4)
+  businessCode  String   @default("") @map("business_code") @db.VarChar(8)
+  createdAt     DateTime @map("created_at") @db.Timestamptz(6)
+  isActive      Boolean  @map("is_active")
 
-  @@map("tenant_settings")
+  retailSettings RetailTenantSettings?
+  categories     Category[]
+  products       Product[]
+  warehouses     Warehouse[]
+
+  @@map("tenants")
+}
+
+model RetailTenantSettings {
+  tenantId             String    @id @map("tenant_id") @db.VarChar(64)
+  isLocked             Boolean   @default(false) @map("is_locked")
+  lockedAt             DateTime? @map("locked_at") @db.Timestamptz(6)
+  lockedReason         String?   @map("locked_reason") @db.VarChar(500)
+  lockedBy             String?   @map("locked_by") @db.VarChar(255)
+  liteCategoriesSeeded Boolean   @default(false) @map("lite_categories_seeded")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("retail_tenant_settings")
+}
+
+model Category {
+  id            String   @id @db.VarChar(64)
+  tenantId      String   @map("tenant_id") @db.VarChar(64)
+  name          String   @db.VarChar(200)
+  createdAt     DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @map("updated_at") @db.Timestamptz(6)
+  productId     String?  @map("product_id") @db.VarChar(64)
+  barcode       String   @default("") @db.VarChar(32)
+  code          String   @default("") @db.VarChar(32)
+  unitOfMeasure String   @default("each") @map("unit_of_measure") @db.VarChar(32)
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  meta     RetailCategoryMeta?
+  products Product[]
+
+  @@index([tenantId], map: "ix_categories_tenant_id")
+  @@map("categories")
+}
+
+model RetailCategoryMeta {
+  categoryId String  @id @map("category_id") @db.VarChar(64)
+  tenantId   String  @map("tenant_id") @db.VarChar(64)
+  icon       String? @default("package") @db.VarChar(50)
+  isDefault  Boolean @default(false) @map("is_default")
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId], map: "idx_retail_category_meta_tenant_id")
+  @@map("retail_category_meta")
+}
+
+model Product {
+  id                String   @id @db.VarChar(64)
+  tenantId          String   @map("tenant_id") @db.VarChar(64)
+  sku               String   @db.VarChar(200)
+  barcode           String   @db.VarChar(200)
+  name              String   @db.VarChar(500)
+  imageUrl          String   @map("image_url") @db.VarChar(500)
+  price             Decimal  @db.Decimal(12, 2)
+  categoryId        String?  @map("category_id") @db.VarChar(64)
+  lowStockThreshold Int      @map("low_stock_threshold")
+  unitsPerDozen     Int      @map("units_per_dozen")
+  quantity          Int      @default(0)
+  unitOfMeasure     String   @default("each") @map("unit_of_measure") @db.VarChar(16)
+  hasSpecifications Boolean  @default(false) @map("has_specifications")
+  isRetired         Boolean  @default(false) @map("is_retired")
+  discontinuedBy    String   @default("") @map("discontinued_by") @db.VarChar(200)
+  createdAt         DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category    Category?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  meta        RetailProductMeta?
+  stockLevels StockLevel[]
+
+  @@unique([tenantId, barcode], map: "ix_products_tenant_id_barcode")
+  @@unique([tenantId, sku], map: "ix_products_tenant_id_sku")
+  @@index([tenantId], map: "ix_products_tenant_id")
+  @@map("products")
+}
+
+model RetailProductMeta {
+  productId      String   @id @map("product_id") @db.VarChar(64)
+  tenantId       String   @map("tenant_id") @db.VarChar(64)
+  tags           String[] @default([])
+  costPrice      Decimal? @map("cost_price") @db.Decimal(15, 2)
+  specifications Json?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("retail_product_meta")
+}
+
+model Warehouse {
+  id                   String   @id @db.VarChar(64)
+  tenantId             String   @map("tenant_id") @db.VarChar(64)
+  name                 String   @db.VarChar(200)
+  code                 String   @db.VarChar(80)
+  locationCode         String   @default("") @map("location_code") @db.VarChar(2)
+  siteCode             String   @default("") @map("site_code") @db.VarChar(16)
+  isActive             Boolean  @default(true) @map("is_active")
+  itemPricesJson       String   @default("{}") @map("item_prices_json")
+  withheldProductsJson String   @default("[]") @map("withheld_products_json")
+  shelfEventsJson      String   @default("{}") @map("shelf_events_json")
+  itemBarcodesJson     String   @default("{}") @map("item_barcodes_json")
+  createdAt            DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stockLevels StockLevel[]
+
+  @@unique([tenantId, code], map: "ix_warehouses_tenant_id_code")
+  @@map("warehouses")
+}
+
+model StockLevel {
+  warehouseId String   @map("warehouse_id") @db.VarChar(64)
+  productId   String   @map("product_id") @db.VarChar(64)
+  tenantId    String   @map("tenant_id") @db.VarChar(64)
+  quantity    Int
+  updatedAt   DateTime @map("updated_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([warehouseId, productId], map: "pk_stock_levels")
+  @@map("stock_levels")
+}
+
+model Receipt {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.VarChar(64)
+  type              String    @db.VarChar(16)
+  customerName      String?   @map("customer_name") @db.VarChar(200)
+  customerPhone     String?   @map("customer_phone") @db.VarChar(50)
+  subtotal          Decimal   @db.Decimal(15, 2)
+  discountAmount    Decimal   @map("discount_amount") @db.Decimal(15, 2)
+  netAmount         Decimal   @map("net_amount") @db.Decimal(15, 2)
+  amountPaid        Decimal   @map("amount_paid") @db.Decimal(15, 2)
+  amountDue         Decimal   @map("amount_due") @db.Decimal(15, 2)
+  changeGiven       Decimal   @map("change_given") @db.Decimal(15, 2)
+  isPartPayment     Boolean   @map("is_part_payment")
+  isPaid            Boolean   @map("is_paid")
+  notes             String?   @db.VarChar(2000)
+  originalReceiptId String?   @map("original_receipt_id") @db.Uuid
+  createdAt         DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  originalReceipt Receipt?  @relation("ReceiptReturns", fields: [originalReceiptId], references: [id], onDelete: Restrict)
+  linkedReturns   Receipt[] @relation("ReceiptReturns")
+  sales           Sale[]
+  payments        Payment[]
+
+  @@index([tenantId], map: "ix_retail_receipts_tenant_id")
+  @@index([originalReceiptId], map: "ix_retail_receipts_original_receipt_id")
+  @@map("retail_receipts")
+}
+
+model Sale {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.VarChar(64)
+  productId          String?  @map("product_id") @db.VarChar(64)
+  receiptId          String?  @map("receipt_id") @db.Uuid
+  type               String   @db.VarChar(16)
+  productName        String   @map("product_name") @db.VarChar(500)
+  customerName       String?  @map("customer_name") @db.VarChar(200)
+  customerPhone      String?  @map("customer_phone") @db.VarChar(50)
+  discountAmount     Decimal  @map("discount_amount") @db.Decimal(15, 2)
+  amountPaid         Decimal  @map("amount_paid") @db.Decimal(15, 2)
+  changeGiven        Decimal  @map("change_given") @db.Decimal(15, 2)
+  amountDue          Decimal  @map("amount_due") @db.Decimal(15, 2)
+  isPartPayment      Boolean  @map("is_part_payment")
+  quantitySold       Int      @map("quantity_sold")
+  unitPriceAtSale    Decimal  @map("unit_price_at_sale") @db.Decimal(15, 2)
+  totalAmount        Decimal  @map("total_amount") @db.Decimal(15, 2)
+  returnCondition    String?  @map("return_condition") @db.VarChar(16)
+  returnDisposition  String?  @map("return_disposition") @db.VarChar(16)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  receipt Receipt? @relation(fields: [receiptId], references: [id], onUpdate: NoAction)
+
+  @@index([tenantId], map: "ix_retail_sales_tenant_id")
+  @@index([receiptId], map: "ix_retail_sales_receipt_id")
+  @@map("retail_sales")
+}
+
+model Payment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.VarChar(64)
+  receiptId String   @map("receipt_id") @db.Uuid
+  amount    Decimal  @db.Decimal(15, 2)
+  method    String   @db.VarChar(32)
+  note      String?  @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@index([receiptId], map: "ix_retail_payments_receipt_id")
+  @@index([tenantId], map: "ix_retail_payments_tenant_id")
+  @@map("retail_payments")
 }
 
 model IdempotencyKey {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
+  tenantId     String   @map("tenant_id") @db.VarChar(64)
   key          String   @db.VarChar(128)
   route        String   @db.VarChar(100)
   responseJson Json     @map("response_json")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([tenantId, route, key], map: "idempotency_keys_tenant_route_key_unique")
   @@index([createdAt], map: "idx_idempotency_keys_created_at")
   @@map("idempotency_keys")
 }
 
-model Category {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String    @map("tenant_id") @db.Uuid
-  name      String    @db.VarChar(100)
-  icon      String?   @default("package") @db.VarChar(50)
-  isDefault Boolean?  @default(false) @map("is_default")
-  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  products  Product[]
-
-  @@index([tenantId], map: "idx_categories_tenant_id")
-  @@map("categories")
-}
-
-model Product {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId          String    @map("tenant_id") @db.Uuid
-  categoryId        String?   @map("category_id") @db.Uuid
-  name              String    @db.VarChar(255)
-  scanCode          String?   @unique @map("scan_code") @db.VarChar(255)
-  tags              String[]  @default([])
-  hasSpecifications Boolean   @default(false) @map("has_specifications")
-  quantity          Int?      @default(0)
-  unitPrice         Decimal?  @default(0.00) @map("unit_price") @db.Decimal(15, 2)
-  costPrice         Decimal?  @map("cost_price") @db.Decimal(15, 2)
-  specifications    Json?     @map("specifications")
-  lowStockThreshold Int?      @default(5) @map("low_stock_threshold")
-  imageUrl          String?   @map("image_url") @db.VarChar(500)
-  createdAt         DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt         DateTime? @default(now()) @map("updated_at") @db.Timestamp(6)
-  category          Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  sales             Sale[]
-
-  @@index([tenantId], map: "idx_products_tenant_id")
-  @@index([categoryId], map: "idx_products_category_id")
-  @@map("products")
-}
-
-model Sale {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId           String              @map("tenant_id") @db.Uuid
-  productId          String?             @map("product_id") @db.Uuid
-  receiptId          String?             @map("receipt_id") @db.Uuid
-  type               SaleType            @default(SALE)
-  productName        String              @map("product_name") @db.VarChar(255)
-  customerName       String?             @map("customer_name") @db.VarChar(255)
-  customerPhone      String?             @map("customer_phone") @db.VarChar(50)
-  discountAmount     Decimal?            @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
-  amountPaid         Decimal?            @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
-  changeGiven        Decimal?            @default(0.00) @map("change_given") @db.Decimal(15, 2)
-  amountDue          Decimal?            @default(0.00) @map("amount_due") @db.Decimal(15, 2)
-  isPartPayment      Boolean             @default(false) @map("is_part_payment")
-  quantitySold       Int                 @map("quantity_sold")
-  unitPriceAtSale    Decimal             @map("unit_price_at_sale") @db.Decimal(15, 2)
-  totalAmount        Decimal             @map("total_amount") @db.Decimal(15, 2)
-  returnCondition    ReturnCondition?    @map("return_condition")
-  returnDisposition  ReturnDisposition?  @map("return_disposition")
-  createdAt          DateTime?           @default(now()) @map("created_at") @db.Timestamp(6)
-  product            Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
-  receipt            Receipt?            @relation(fields: [receiptId], references: [id], onDelete: SetNull)
-
-  @@index([tenantId], map: "idx_sales_tenant_id")
-  @@index([type], map: "idx_sales_type")
-  @@index([createdAt], map: "idx_sales_created_at")
-  @@index([receiptId], map: "idx_sales_receipt_id")
-  @@map("sales")
-}
-
-model Receipt {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId          String    @map("tenant_id") @db.Uuid
-  type              SaleType  @default(SALE)
-  customerName      String?   @map("customer_name") @db.VarChar(255)
-  customerPhone     String?   @map("customer_phone") @db.VarChar(50)
-  subtotal          Decimal   @default(0.00) @db.Decimal(15, 2)
-  discountAmount    Decimal   @default(0.00) @map("discount_amount") @db.Decimal(15, 2)
-  netAmount         Decimal   @default(0.00) @map("net_amount") @db.Decimal(15, 2)
-  amountPaid        Decimal   @default(0.00) @map("amount_paid") @db.Decimal(15, 2)
-  amountDue         Decimal   @default(0.00) @map("amount_due") @db.Decimal(15, 2)
-  changeGiven       Decimal   @default(0.00) @map("change_given") @db.Decimal(15, 2)
-  isPartPayment     Boolean   @default(false) @map("is_part_payment")
-  isPaid            Boolean   @default(true) @map("is_paid")
-  notes             String?   @db.VarChar(500)
-  originalReceiptId String?   @map("original_receipt_id") @db.Uuid
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
-  originalReceipt   Receipt?  @relation("ReceiptReturns", fields: [originalReceiptId], references: [id], onDelete: SetNull)
-  linkedReturns     Receipt[] @relation("ReceiptReturns")
-  sales             Sale[]
-  payments          Payment[]
-
-  @@index([tenantId], map: "idx_receipts_tenant_id")
-  @@index([originalReceiptId], map: "idx_receipts_original_receipt_id")
-  @@index([createdAt], map: "idx_receipts_created_at")
-  @@index([isPaid], map: "idx_receipts_is_paid")
-  @@map("receipts")
-}
-
-model Payment {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  receiptId String   @map("receipt_id") @db.Uuid
-  amount    Decimal  @db.Decimal(15, 2)
-  method    String?  @default("cash") @db.VarChar(50)
-  note      String?  @db.VarChar(255)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  receipt   Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-
-  @@index([receiptId], map: "idx_payments_receipt_id")
-  @@index([tenantId], map: "idx_payments_tenant_id")
-  @@map("payments")
-}
-
-/// End-of-day cash / payment reconciliation for one business calendar day.
 model DayClose {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
-  /// Calendar day in Africa/Freetown (stored as date at midnight UTC).
+  tenantId         String   @map("tenant_id") @db.VarChar(64)
   businessDate     DateTime @map("business_date") @db.Date
   expectedByMethod Json     @map("expected_by_method")
   countedByMethod  Json     @map("counted_by_method")
@@ -169,28 +256,12 @@ model DayClose {
   returnCount      Int      @default(0) @map("return_count")
   paymentCount     Int      @default(0) @map("payment_count")
   notes            String?  @db.VarChar(500)
-  closedAt         DateTime @default(now()) @map("closed_at") @db.Timestamp(6)
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  closedAt         DateTime @default(now()) @map("closed_at") @db.Timestamptz(6)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, businessDate], map: "day_closes_tenant_business_date_unique")
   @@index([tenantId], map: "idx_day_closes_tenant_id")
   @@index([businessDate], map: "idx_day_closes_business_date")
   @@map("day_closes")
-}
-
-enum SaleType {
-  SALE
-  RETURN
-}
-
-enum ReturnCondition {
-  SEALED
-  OPENED
-  DAMAGED
-}
-
-enum ReturnDisposition {
-  RESTOCK
-  DISCARD
 }

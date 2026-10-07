@@ -1,19 +1,20 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
-import { formatProductResponse } from '@/lib/format-product'
+import { formatProductResponse, productInclude } from '@/lib/format-product'
 import { parseSpecifications } from '@/lib/product-specifications'
 import {
+  entityIdSchema,
   moneySchema,
   parseJsonBody,
   quantitySchema,
   trimmedString,
-  uuidSchema,
-  validateRouteId,
+  validateEntityRouteId,
 } from '@/lib/api-validation'
-import { Prisma, type Prisma as PrismaNamespace } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { isValidScanCode } from '@/lib/scan-code'
+import { ensureDefaultWarehouse, setProductStock } from '@/lib/warehouse'
 
 const productPatchSchema = z.object({
   name: trimmedString(255).optional(),
@@ -21,7 +22,7 @@ const productPatchSchema = z.object({
   unitPrice: moneySchema.optional(),
   costPrice: moneySchema.nullish(),
   lowStockThreshold: quantitySchema.optional(),
-  categoryId: uuidSchema.nullish(),
+  categoryId: entityIdSchema.nullish(),
   imageUrl: z.string().trim().max(500).nullish(),
   scanCode: z
     .string()
@@ -29,16 +30,15 @@ const productPatchSchema = z.object({
     .max(255)
     .nullish()
     .refine((val) => !val || isValidScanCode(val), {
-      message: "Scan code may only use letters, numbers, hyphen, underscore, or dot.",
+      message: 'Scan code may only use letters, numbers, hyphen, underscore, or dot.',
     }),
   tags: z.array(z.string().trim().min(1).max(50)).max(25).optional(),
   hasSpecifications: z.boolean().optional(),
   specifications: z.unknown().optional(),
 })
 
-// GET single product
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -47,38 +47,25 @@ export async function GET(
     const session = sessionResult
 
     const { id } = await params
-    const invalidId = validateRouteId(id)
+    const invalidId = validateEntityRouteId(id)
     if (invalidId) return invalidId
 
     const product = await prisma.product.findFirst({
-      where: {
-        id,
-        tenantId: session.tenantId
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      }
+      where: { id, tenantId: session.tenantId },
+      include: productInclude,
     })
 
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    return NextResponse.json({
-      product: formatProductResponse(product),
-    })
+    return NextResponse.json({ product: formatProductResponse(product) })
   } catch (error) {
     console.error('Get product error:', error)
     return NextResponse.json({ error: 'Failed to fetch product' }, { status: 500 })
   }
 }
 
-// PATCH update product
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -89,7 +76,7 @@ export async function PATCH(
     const session = sessionResult
 
     const { id } = await params
-    const invalidId = validateRouteId(id)
+    const invalidId = validateEntityRouteId(id)
     if (invalidId) return invalidId
 
     const parsed = await parseJsonBody(request, productPatchSchema)
@@ -110,7 +97,7 @@ export async function PATCH(
     } = parsed.data
 
     const existingProduct = await prisma.product.findFirst({
-      where: { id, tenantId: session.tenantId }
+      where: { id, tenantId: session.tenantId },
     })
 
     if (!existingProduct) {
@@ -127,33 +114,63 @@ export async function PATCH(
       }
     }
 
-    const product = await prisma.product.update({
-      where: { id },
-      data: {
-        name: name ?? undefined,
-        scanCode: scanCode === undefined ? undefined : (scanCode?.trim() || null),
-        tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()) : undefined,
-        hasSpecifications: hasSpecifications === undefined ? undefined : Boolean(hasSpecifications),
-        specifications:
-          specifications === undefined
-            ? undefined
-            : (parseSpecifications(specifications) as PrismaNamespace.InputJsonValue),
-        quantity: quantity ?? undefined,
-        unitPrice: unitPrice ?? undefined,
-        costPrice: costPrice === undefined ? undefined : costPrice,
-        lowStockThreshold: lowStockThreshold ?? undefined,
-        categoryId: categoryId ?? undefined,
-        imageUrl: imageUrl ?? null,
-        updatedAt: new Date(),
-      },
-      include: {
-        category: { select: { id: true, name: true, icon: true } },
-      },
+    const metaUpdate = {
+      tags: Array.isArray(tags)
+        ? tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim())
+        : undefined,
+      costPrice: costPrice === undefined ? undefined : costPrice,
+      specifications:
+        specifications === undefined
+          ? undefined
+          : (parseSpecifications(specifications) as Prisma.InputJsonValue),
+    }
+
+    const product = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id },
+        data: {
+          name: name ?? undefined,
+          barcode: scanCode === undefined ? undefined : scanCode?.trim() || existingProduct.barcode,
+          sku:
+            scanCode === undefined
+              ? undefined
+              : scanCode?.trim() || existingProduct.sku,
+          hasSpecifications:
+            hasSpecifications === undefined ? undefined : Boolean(hasSpecifications),
+          quantity: quantity ?? undefined,
+          price: unitPrice ?? undefined,
+          lowStockThreshold: lowStockThreshold ?? undefined,
+          categoryId: categoryId ?? undefined,
+          imageUrl: imageUrl === undefined ? undefined : imageUrl || '',
+          updatedAt: new Date(),
+          meta: {
+            upsert: {
+              create: {
+                tenantId: session.tenantId,
+                tags: metaUpdate.tags ?? [],
+                costPrice: metaUpdate.costPrice ?? null,
+                specifications: metaUpdate.specifications ?? Prisma.JsonNull,
+              },
+              update: {
+                tags: metaUpdate.tags,
+                costPrice: metaUpdate.costPrice,
+                specifications: metaUpdate.specifications,
+              },
+            },
+          },
+        },
+        include: productInclude,
+      })
+
+      if (quantity !== undefined) {
+        const warehouse = await ensureDefaultWarehouse(session.tenantId, tx)
+        await setProductStock(session.tenantId, id, warehouse.id, quantity, tx)
+      }
+
+      return updated
     })
 
-    return NextResponse.json({
-      product: formatProductResponse(product),
-    })
+    return NextResponse.json({ product: formatProductResponse(product) })
   } catch (error) {
     console.error('Update product error:', error)
     if (
@@ -169,9 +186,8 @@ export async function PATCH(
   }
 }
 
-// DELETE product
 export async function DELETE(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -180,19 +196,22 @@ export async function DELETE(
     const session = sessionResult
 
     const { id } = await params
-    const invalidId = validateRouteId(id)
+    const invalidId = validateEntityRouteId(id)
     if (invalidId) return invalidId
 
     const existingProduct = await prisma.product.findFirst({
       where: { id, tenantId: session.tenantId },
-      select: { id: true }
+      select: { id: true },
     })
 
     if (!existingProduct) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    await prisma.product.delete({ where: { id } })
+    await prisma.product.update({
+      where: { id },
+      data: { isRetired: true, updatedAt: new Date() },
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {

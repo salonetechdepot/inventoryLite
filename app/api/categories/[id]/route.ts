@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
+import { validateEntityRouteId } from '@/lib/api-validation'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
-// PATCH update category
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const sessionResult = await getApiSession()
@@ -12,10 +12,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     const session = sessionResult
 
     const { id } = await context.params
+    const invalidId = validateEntityRouteId(id)
+    if (invalidId) return invalidId
+
     const { name, icon } = await request.json()
 
     const existing = await prisma.category.findFirst({
       where: { id, tenantId: session.tenantId },
+      include: { meta: true },
     })
 
     if (!existing) {
@@ -31,16 +35,32 @@ export async function PATCH(request: Request, context: RouteContext) {
       where: { id },
       data: {
         name: trimmedName,
-        icon: typeof icon === 'string' && icon.trim() ? icon.trim() : existing.icon,
+        updatedAt: new Date(),
+        meta: {
+          upsert: {
+            create: {
+              tenantId: session.tenantId,
+              icon: typeof icon === 'string' && icon.trim() ? icon.trim() : 'package',
+              isDefault: false,
+            },
+            update: {
+              icon:
+                typeof icon === 'string' && icon.trim()
+                  ? icon.trim()
+                  : existing.meta?.icon,
+            },
+          },
+        },
       },
+      include: { meta: true },
     })
 
     return NextResponse.json({
       category: {
         id: category.id,
         name: category.name,
-        icon: category.icon,
-        is_default: category.isDefault ?? false,
+        icon: category.meta?.icon ?? 'package',
+        is_default: category.meta?.isDefault ?? false,
         created_at: category.createdAt,
       },
     })
@@ -50,7 +70,6 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-// DELETE category (products lose category link)
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const sessionResult = await getApiSession()
@@ -58,6 +77,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const session = sessionResult
 
     const { id } = await context.params
+    const invalidId = validateEntityRouteId(id)
+    if (invalidId) return invalidId
 
     const existing = await prisma.category.findFirst({
       where: { id, tenantId: session.tenantId },

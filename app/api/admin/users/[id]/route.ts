@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { isAdminEmail, requireAdminSession } from '@/lib/admin'
 import { prisma } from '@/lib/prisma'
 import { setTenantLockState } from '@/lib/tenant-lock'
-import { validateRouteId } from '@/lib/api-validation'
+import { entityIdSchema } from '@/lib/api-validation'
 import { z } from 'zod'
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -12,6 +12,14 @@ const lockSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 })
 
+function invalidTenantId(id: string) {
+  const parsed = entityIdSchema.safeParse(id)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+  }
+  return null
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const session = await requireAdminSession()
   if (!session) {
@@ -19,11 +27,12 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params
-  const invalidId = validateRouteId(id)
+  const invalidId = invalidTenantId(id)
   if (invalidId) return invalidId
 
-  const tenant = await prisma.tenantSettings.findUnique({
-    where: { tenantId: id },
+  const tenant = await prisma.tenant.findUnique({
+    where: { id },
+    include: { retailSettings: true },
   })
 
   if (!tenant) {
@@ -32,7 +41,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const [products, receipts, sales, categories, payments, recentReceipts] =
     await Promise.all([
-      prisma.product.count({ where: { tenantId: id } }),
+      prisma.product.count({ where: { tenantId: id, isRetired: false } }),
       prisma.receipt.count({ where: { tenantId: id } }),
       prisma.sale.count({ where: { tenantId: id } }),
       prisma.category.count({ where: { tenantId: id } }),
@@ -50,17 +59,19 @@ export async function GET(_request: Request, context: RouteContext) {
       }),
     ])
 
+  const settings = tenant.retailSettings
+
   return NextResponse.json({
     user: {
-      id: tenant.tenantId,
+      id: tenant.id,
       email: tenant.email,
-      phone_e164: tenant.phoneE164,
-      business_name: tenant.businessName,
+      phone_e164: tenant.phone,
+      business_name: tenant.name,
       theme_color: tenant.themeColor,
-      shop_logo_url: tenant.shopLogoUrl,
-      is_locked: tenant.isLocked,
-      locked_at: tenant.lockedAt,
-      locked_reason: tenant.lockedReason,
+      shop_logo_url: tenant.imageUrl,
+      is_locked: settings?.isLocked ?? false,
+      locked_at: settings?.lockedAt ?? null,
+      locked_reason: settings?.lockedReason ?? null,
       created_at: tenant.createdAt,
       is_admin: isAdminEmail(tenant.email),
       counts: { products, receipts, sales, categories, payments },
@@ -81,7 +92,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params
-  const invalidId = validateRouteId(id)
+  const invalidId = invalidTenantId(id)
   if (invalidId) return invalidId
 
   if (session.tenantId === id) {
@@ -91,9 +102,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     )
   }
 
-  const target = await prisma.tenantSettings.findUnique({
-    where: { tenantId: id },
-  })
+  const target = await prisma.tenant.findUnique({ where: { id } })
   if (!target) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
   }
@@ -108,10 +117,13 @@ export async function DELETE(_request: Request, context: RouteContext) {
     prisma.payment.deleteMany({ where: { tenantId: id } }),
     prisma.sale.deleteMany({ where: { tenantId: id } }),
     prisma.receipt.deleteMany({ where: { tenantId: id } }),
+    prisma.retailProductMeta.deleteMany({ where: { tenantId: id } }),
     prisma.product.deleteMany({ where: { tenantId: id } }),
+    prisma.retailCategoryMeta.deleteMany({ where: { tenantId: id } }),
     prisma.category.deleteMany({ where: { tenantId: id } }),
     prisma.idempotencyKey.deleteMany({ where: { tenantId: id } }),
-    prisma.tenantSettings.delete({ where: { tenantId: id } }),
+    prisma.dayClose.deleteMany({ where: { tenantId: id } }),
+    prisma.retailTenantSettings.deleteMany({ where: { tenantId: id } }),
   ])
 
   return NextResponse.json({ ok: true })
@@ -124,7 +136,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params
-  const invalidId = validateRouteId(id)
+  const invalidId = invalidTenantId(id)
   if (invalidId) return invalidId
 
   let body: z.infer<typeof lockSchema>
@@ -134,9 +146,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const target = await prisma.tenantSettings.findUnique({
-    where: { tenantId: id },
-  })
+  const target = await prisma.tenant.findUnique({ where: { id } })
   if (!target) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
   }

@@ -23,31 +23,24 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Invalid theme color format' }, { status: 400 })
     }
 
-    const settings = await prisma.tenantSettings.upsert({
-      where: { tenantId: session.tenantId },
-      create: {
-        tenantId: session.tenantId,
-        email: session.email,
-        businessName: session.businessName,
-        themeColor: themeColor === undefined ? null : themeColor || null,
-        shopLogoUrl: shopLogoUrl === undefined ? null : shopLogoUrl || null,
-      },
-      update: {
+    const tenant = await prisma.tenant.update({
+      where: { id: session.tenantId },
+      data: {
         themeColor: themeColor === undefined ? undefined : themeColor || null,
-        shopLogoUrl: shopLogoUrl === undefined ? undefined : shopLogoUrl || null,
+        imageUrl: shopLogoUrl === undefined ? undefined : shopLogoUrl || null,
       },
     })
 
     return NextResponse.json({
       user: {
-        id: settings.tenantId,
-        tenant_id: settings.tenantId,
-        email: settings.email || session.email,
-        phone_e164: settings.phoneE164,
-        business_name: settings.businessName || session.businessName,
-        theme_color: settings.themeColor,
-        shop_logo_url: settings.shopLogoUrl,
-        created_at: settings.createdAt,
+        id: tenant.id,
+        tenant_id: tenant.id,
+        email: tenant.email || session.email,
+        phone_e164: tenant.phone,
+        business_name: tenant.name || session.businessName,
+        theme_color: tenant.themeColor,
+        shop_logo_url: tenant.imageUrl,
+        created_at: tenant.createdAt,
       },
     })
   } catch (error) {

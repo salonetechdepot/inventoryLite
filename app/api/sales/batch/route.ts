@@ -8,8 +8,10 @@ import {
   parseJsonBody,
   positiveQuantitySchema,
   trimmedString,
+  entityIdSchema,
   uuidSchema,
 } from '@/lib/api-validation'
+import { decrementProductStockIfEnough, adjustProductStock } from '@/lib/warehouse'
 import {
   isReturnCondition,
   isReturnDisposition,
@@ -32,7 +34,7 @@ interface SaleItem {
 type TransactionType = 'sale' | 'return'
 
 const saleItemSchema = z.object({
-  productId: uuidSchema,
+  productId: entityIdSchema,
   quantity: positiveQuantitySchema,
   returnCondition: z.enum(['SEALED', 'OPENED', 'DAMAGED']).optional(),
   returnDisposition: z.enum(['RESTOCK', 'DISCARD']).optional(),
@@ -129,8 +131,8 @@ export async function POST(request: Request) {
         id: true,
         name: true,
         quantity: true,
-        unitPrice: true,
-        specifications: true,
+        price: true,
+        meta: { select: { specifications: true } },
       },
     })
     const productMap = new Map(products.map((p) => [p.id, p]))
@@ -162,7 +164,7 @@ export async function POST(request: Request) {
 
     const subtotal = items.reduce((sum, item) => {
       const product = productMap.get(item.productId)!
-      return sum + item.quantity * Number(product.unitPrice ?? 0)
+      return sum + item.quantity * Number(product.price ?? 0)
     }, 0)
     const safeDiscount = Math.max(0, Number(discountAmount || 0))
     const netAmount = Math.max(0, subtotal - safeDiscount)
@@ -194,6 +196,7 @@ export async function POST(request: Request) {
 
     // Single DB transaction: receipt + sales + product stock updates + initial payment
     const response = await prisma.$transaction(async (tx) => {
+      const now = new Date()
       const receipt = await tx.receipt.create({
         data: {
           tenantId: session.tenantId,
@@ -210,20 +213,22 @@ export async function POST(request: Request) {
           isPaid,
           notes: notes?.trim() || null,
           originalReceiptId: linkedOriginalId,
+          createdAt: now,
+          updatedAt: now,
         },
       })
 
       const createdSales: Prisma.SaleGetPayload<Prisma.SaleDefaultArgs>[] = []
       for (const item of items) {
         const product = productMap.get(item.productId)!
-        const unitPrice = Number(product.unitPrice ?? 0)
+        const unitPrice = Number(product.price ?? 0)
         const totalAmount = item.quantity * unitPrice
         const restockQty = isReturn
           ? restockQuantityForLine(item.quantity, item.returnDisposition)
           : 0
         const lineProductName = saleLineProductName(
           product.name,
-          parseSpecifications(product.specifications)
+          parseSpecifications(product.meta?.specifications)
         )
 
         const sale = await tx.sale.create({
@@ -251,23 +256,22 @@ export async function POST(request: Request) {
 
         if (isReturn) {
           if (restockQty > 0) {
-            await tx.product.updateMany({
-              where: { id: item.productId, tenantId: session.tenantId },
-              data: { quantity: { increment: restockQty }, updatedAt: new Date() },
-            })
+            const next = await adjustProductStock(
+              session.tenantId,
+              item.productId,
+              restockQty,
+              tx
+            )
+            if (next < 0) throw new InsufficientStockError(product.name)
           }
         } else {
-          const stockUpdate = await tx.product.updateMany({
-            where: {
-              id: item.productId,
-              tenantId: session.tenantId,
-              quantity: { gte: item.quantity },
-            },
-            data: { quantity: { decrement: item.quantity }, updatedAt: new Date() },
-          })
-          if (stockUpdate.count !== 1) {
-            throw new InsufficientStockError(product.name)
-          }
+          const ok = await decrementProductStockIfEnough(
+            session.tenantId,
+            item.productId,
+            item.quantity,
+            tx
+          )
+          if (!ok) throw new InsufficientStockError(product.name)
         }
       }
 

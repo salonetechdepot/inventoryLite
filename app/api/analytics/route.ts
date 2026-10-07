@@ -39,9 +39,10 @@ export async function GET() {
         },
       }),
       prisma.product.findMany({
-        where: { tenantId },
+        where: { tenantId, isRetired: false },
         include: {
           category: { select: { name: true } },
+          meta: { select: { costPrice: true } },
         },
       }),
       prisma.payment.findMany({
@@ -54,7 +55,10 @@ export async function GET() {
     ])
 
     const costByProduct = new Map(
-      products.map((p) => [p.id, p.costPrice != null ? Number(p.costPrice) : null])
+      products.map((p) => [
+        p.id,
+        p.meta?.costPrice != null ? Number(p.meta.costPrice) : null,
+      ])
     )
 
     const lineProfit = (line: (typeof allLines)[0]) => {
@@ -116,11 +120,11 @@ export async function GET() {
       total_products: products.length,
       total_items: products.reduce((sum, p) => sum + (p.quantity ?? 0), 0),
       total_value: products.reduce(
-        (sum, p) => sum + (p.quantity ?? 0) * Number(p.unitPrice ?? 0),
+        (sum, p) => sum + (p.quantity ?? 0) * Number(p.price ?? 0),
         0
       ),
       stock_cost_value: products.reduce((sum, p) => {
-        const cost = p.costPrice != null ? Number(p.costPrice) : 0
+        const cost = p.meta?.costPrice != null ? Number(p.meta.costPrice) : 0
         return sum + (p.quantity ?? 0) * cost
       }, 0),
       low_stock: products.filter(
@@ -143,7 +147,7 @@ export async function GET() {
       }
       existing.productCount += 1
       existing.totalQuantity += product.quantity ?? 0
-      existing.totalValue += (product.quantity ?? 0) * Number(product.unitPrice ?? 0)
+      existing.totalValue += (product.quantity ?? 0) * Number(product.price ?? 0)
       categoryMap.set(categoryName, existing)
     }
     const categoryStats = [...categoryMap.values()].sort((a, b) => b.totalValue - a.totalValue)

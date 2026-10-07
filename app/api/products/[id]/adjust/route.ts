@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
-import { parseJsonBody, validateRouteId } from '@/lib/api-validation'
+import { formatProductResponse, productInclude } from '@/lib/format-product'
+import { parseJsonBody, quantitySchema, validateEntityRouteId } from '@/lib/api-validation'
+import { adjustProductStock } from '@/lib/warehouse'
 import { z } from 'zod'
 
 const stockAdjustSchema = z.object({
-  adjustment: z.coerce.number().int().min(-1_000_000_000).max(1_000_000_000),
+  delta: z.coerce.number().int().min(-1_000_000_000).max(1_000_000_000).refine((n) => n !== 0),
 })
 
-// POST adjust stock quantity (add or subtract)
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -19,40 +20,36 @@ export async function POST(
     const session = sessionResult
 
     const { id } = await params
-    const invalidId = validateRouteId(id)
+    const invalidId = validateEntityRouteId(id)
     if (invalidId) return invalidId
 
     const parsed = await parseJsonBody(request, stockAdjustSchema)
     if (!parsed.ok) return parsed.response
-    const { adjustment } = parsed.data
 
-    // First check if product exists and belongs to user
     const existing = await prisma.product.findFirst({
       where: { id, tenantId: session.tenantId },
-      select: { quantity: true, name: true }
+      select: { id: true },
     })
-
     if (!existing) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    const currentQty = existing.quantity ?? 0
-    const newQty = Math.max(0, currentQty + adjustment) // Prevent negative stock
-
-    const product = await prisma.product.update({
-      where: { id },
-      data: {
-        quantity: newQty,
-        updatedAt: new Date()
-      },
-      select: {
-        id: true,
-        name: true,
-        quantity: true
-      }
+    const result = await prisma.$transaction(async (tx) => {
+      const next = await adjustProductStock(session.tenantId, id, parsed.data.delta, tx)
+      if (next < 0) return { ok: false as const }
+      return { ok: true as const }
     })
 
-    return NextResponse.json({ product })
+    if (!result.ok) {
+      return NextResponse.json({ error: 'Stock cannot go below zero' }, { status: 400 })
+    }
+
+    const product = await prisma.product.findFirstOrThrow({
+      where: { id, tenantId: session.tenantId },
+      include: productInclude,
+    })
+
+    return NextResponse.json({ product: formatProductResponse(product) })
   } catch (error) {
     console.error('Adjust stock error:', error)
     return NextResponse.json({ error: 'Failed to adjust stock' }, { status: 500 })

@@ -12,33 +12,34 @@ export async function GET(request: Request) {
   const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 200)
   const q = (searchParams.get('q') || '').trim().toLowerCase()
 
-  const tenants = await prisma.tenantSettings.findMany({
+  const tenants = await prisma.tenant.findMany({
     where: q
       ? {
           OR: [
             { email: { contains: q, mode: 'insensitive' } },
-            { businessName: { contains: q, mode: 'insensitive' } },
-            { phoneE164: { contains: q } },
+            { name: { contains: q, mode: 'insensitive' } },
+            { phone: { contains: q } },
           ],
         }
       : undefined,
     orderBy: { createdAt: 'desc' },
     take: limit,
+    include: { retailSettings: true },
   })
 
   const withCounts = await Promise.all(
     tenants.map(async (tenant) => {
       const [products, receipts, sales] = await Promise.all([
-        prisma.product.count({ where: { tenantId: tenant.tenantId } }),
-        prisma.receipt.count({ where: { tenantId: tenant.tenantId } }),
-        prisma.sale.count({ where: { tenantId: tenant.tenantId } }),
+        prisma.product.count({ where: { tenantId: tenant.id, isRetired: false } }),
+        prisma.receipt.count({ where: { tenantId: tenant.id } }),
+        prisma.sale.count({ where: { tenantId: tenant.id } }),
       ])
       return {
-        id: tenant.tenantId,
+        id: tenant.id,
         email: tenant.email,
-        phone_e164: tenant.phoneE164,
-        business_name: tenant.businessName,
-        is_locked: tenant.isLocked,
+        phone_e164: tenant.phone,
+        business_name: tenant.name,
+        is_locked: tenant.retailSettings?.isLocked ?? false,
         created_at: tenant.createdAt,
         is_admin: isAdminEmail(tenant.email),
         product_count: products,

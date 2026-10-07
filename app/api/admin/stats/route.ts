@@ -12,8 +12,8 @@ export async function GET() {
   startOfDay.setHours(0, 0, 0, 0)
 
   const [tenants, products, receipts, salesToday, returnsToday] = await Promise.all([
-    prisma.tenantSettings.count(),
-    prisma.product.count(),
+    prisma.tenant.count(),
+    prisma.product.count({ where: { isRetired: false } }),
     prisma.receipt.count(),
     prisma.receipt.count({
       where: { type: 'SALE', createdAt: { gte: startOfDay } },

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
-import { formatProductResponse } from '@/lib/format-product'
+import { formatProductResponse, productInclude } from '@/lib/format-product'
 import { loadDashboardStatsForTenant } from '@/lib/server/dashboard-stats'
 import { formatReceiptForSync, receiptSyncInclude } from '@/lib/server/format-receipt'
 
@@ -38,44 +38,43 @@ export async function GET(request: Request) {
 
     const categories = await prisma.category.findMany({
       where: { tenantId: session.tenantId },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      orderBy: { name: 'asc' },
       include: {
+        meta: true,
         _count: { select: { products: true } },
       },
     })
 
-    const formattedCategories = categories.map((category) => ({
-      id: category.id,
-      name: category.name,
-      icon: category.icon,
-      is_default: category.isDefault ?? false,
-      product_count: category._count.products,
-      created_at: category.createdAt,
-    }))
+    const formattedCategories = categories
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        icon: category.meta?.icon ?? 'package',
+        is_default: category.meta?.isDefault ?? false,
+        product_count: category._count.products,
+        created_at: category.createdAt,
+      }))
+      .sort((a, b) => {
+        if (a.is_default !== b.is_default) return a.is_default ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
 
     let products
     if (full) {
       products = await prisma.product.findMany({
-        where: { tenantId: session.tenantId },
+        where: { tenantId: session.tenantId, isRetired: false },
         orderBy: { name: 'asc' },
-        include: {
-          category: {
-            select: { id: true, name: true, icon: true },
-          },
-        },
+        include: productInclude,
       })
     } else {
       products = await prisma.product.findMany({
         where: {
           tenantId: session.tenantId,
+          isRetired: false,
           updatedAt: { gt: since! },
         },
         orderBy: { updatedAt: 'asc' },
-        include: {
-          category: {
-            select: { id: true, name: true, icon: true },
-          },
-        },
+        include: productInclude,
       })
     }
 

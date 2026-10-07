@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
+import { newEntityId } from '@/lib/entity-id'
 
-// GET all categories for current user
 export async function GET() {
   try {
     const sessionResult = await getApiSession()
@@ -11,20 +11,26 @@ export async function GET() {
 
     const categories = await prisma.category.findMany({
       where: { tenantId: session.tenantId },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      orderBy: { name: 'asc' },
       include: {
+        meta: true,
         _count: { select: { products: true } },
       },
     })
 
-    const formattedCategories = categories.map((category) => ({
-      id: category.id,
-      name: category.name,
-      icon: category.icon,
-      is_default: category.isDefault ?? false,
-      product_count: category._count.products,
-      created_at: category.createdAt
-    }))
+    const formattedCategories = categories
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        icon: category.meta?.icon ?? 'package',
+        is_default: category.meta?.isDefault ?? false,
+        product_count: category._count.products,
+        created_at: category.createdAt,
+      }))
+      .sort((a, b) => {
+        if (a.is_default !== b.is_default) return a.is_default ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
 
     return NextResponse.json({ categories: formattedCategories })
   } catch (error) {
@@ -33,7 +39,6 @@ export async function GET() {
   }
 }
 
-// POST create new category
 export async function POST(request: Request) {
   try {
     const sessionResult = await getApiSession()
@@ -46,21 +51,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 })
     }
 
+    const now = new Date()
+    const categoryId = newEntityId()
+
     const category = await prisma.category.create({
       data: {
+        id: categoryId,
         tenantId: session.tenantId,
         name,
-        icon: icon || 'package'
-      }
+        createdAt: now,
+        updatedAt: now,
+        meta: {
+          create: {
+            tenantId: session.tenantId,
+            icon: icon || 'package',
+            isDefault: false,
+          },
+        },
+      },
+      include: { meta: true },
     })
 
     return NextResponse.json({
       category: {
         id: category.id,
         name: category.name,
-        icon: category.icon,
-        created_at: category.createdAt
-      }
+        icon: category.meta?.icon ?? 'package',
+        created_at: category.createdAt,
+      },
     })
   } catch (error) {
     console.error('Create category error:', error)

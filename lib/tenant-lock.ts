@@ -44,7 +44,7 @@ export function lockedAccountResponse(lock?: Partial<TenantLockInfo>, status = 4
 }
 
 export async function getTenantLockInfo(tenantId: string): Promise<TenantLockInfo> {
-  const row = await prisma.tenantSettings.findUnique({
+  const row = await prisma.retailTenantSettings.findUnique({
     where: { tenantId },
     select: {
       isLocked: true,
@@ -100,7 +100,13 @@ export async function setTenantLockState(input: {
   reason?: string | null
   lockedBy: string
 }) {
-  return prisma.tenantSettings.update({
+  await prisma.retailTenantSettings.upsert({
+    where: { tenantId: input.tenantId },
+    create: { tenantId: input.tenantId },
+    update: {},
+  })
+
+  return prisma.retailTenantSettings.update({
     where: { tenantId: input.tenantId },
     data: {
       isLocked: input.locked,

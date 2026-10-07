@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import { resolveCheckoutPayment } from '@/lib/checkout-payment'
+import { decrementProductStockIfEnough } from '@/lib/warehouse'
 
 // GET all sales for current user
 export async function GET(request: Request) {
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
     // Get product details
     const product = await prisma.product.findFirst({
       where: { id: productId, tenantId: session.tenantId },
-      select: { id: true, name: true, quantity: true, unitPrice: true }
+      select: { id: true, name: true, quantity: true, price: true },
     })
 
     if (!product) {
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
     }
 
     const currentStock = product.quantity ?? 0
-    const unitPrice = Number(product.unitPrice ?? 0)
+    const unitPrice = Number(product.price ?? 0)
     const productName = product.name
 
     if (currentStock < quantity) {
@@ -121,35 +122,35 @@ export async function POST(request: Request) {
   }
 
   // Record sale
-  const [saleResult] = await prisma.$transaction([
-    prisma.sale.create({
-      data: {
-        tenantId: session.tenantId,
+    const saleResult = await prisma.$transaction(async (tx) => {
+      const ok = await decrementProductStockIfEnough(
+        session.tenantId,
         productId,
-        type: 'SALE',
-        productName,
-        customerName: customerName?.trim() || null,
-        customerPhone: customerPhone?.trim() || null,
-        discountAmount: safeDiscount,
-        amountPaid: amountReceived,
-        amountDue,
-        changeGiven,
-        isPartPayment: storeIsPartPayment,
+        quantity,
+        tx
+      )
+      if (!ok) {
+        throw new Error('INSUFFICIENT_STOCK')
+      }
+      return tx.sale.create({
+        data: {
+          tenantId: session.tenantId,
+          productId,
+          type: 'SALE',
+          productName,
+          customerName: customerName?.trim() || null,
+          customerPhone: customerPhone?.trim() || null,
+          discountAmount: safeDiscount,
+          amountPaid: amountReceived,
+          amountDue,
+          changeGiven,
+          isPartPayment: storeIsPartPayment,
           quantitySold: quantity,
           unitPriceAtSale: unitPrice,
-          totalAmount
-        }
-      }),
-      prisma.product.update({
-        where: { id: productId },
-        data: {
-          quantity: {
-            decrement: quantity
-          },
-          updatedAt: new Date()
-        }
+          totalAmount,
+        },
       })
-    ])
+    })
 
     return NextResponse.json({ 
       sale: {
@@ -162,6 +163,9 @@ export async function POST(request: Request) {
       newStock: currentStock - quantity
     })
   } catch (error) {
+    if (error instanceof Error && error.message === 'INSUFFICIENT_STOCK') {
+      return NextResponse.json({ error: 'Not enough stock.' }, { status: 409 })
+    }
     console.error('Record sale error:', error)
     return NextResponse.json({ error: 'Failed to record sale' }, { status: 500 })
   }

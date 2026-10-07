@@ -3,6 +3,9 @@ import { z } from 'zod'
 
 export const uuidSchema = z.string().uuid()
 
+/** Main-app varchar entity id (products, categories, tenants). */
+export const entityIdSchema = z.string().trim().min(1).max(64)
+
 export const moneySchema = z.coerce
   .number()
   .finite()
@@ -50,6 +53,15 @@ export async function parseJsonBody<T extends z.ZodTypeAny>(
 
 export function validateRouteId(id: string) {
   const parsed = uuidSchema.safeParse(id)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+  }
+
+  return null
+}
+
+export function validateEntityRouteId(id: string) {
+  const parsed = entityIdSchema.safeParse(id)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   }

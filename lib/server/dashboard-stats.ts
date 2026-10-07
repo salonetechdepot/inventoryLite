@@ -3,13 +3,13 @@ import { prisma } from '@/lib/prisma'
 export async function loadDashboardStatsForTenant(tenantId: string) {
   const [products, todaySales, lowStockProductsRaw] = await Promise.all([
     prisma.product.findMany({
-      where: { tenantId },
+      where: { tenantId, isRetired: false },
       select: {
         id: true,
         name: true,
         quantity: true,
         lowStockThreshold: true,
-        unitPrice: true,
+        price: true,
       },
     }),
     prisma.sale.findMany({
@@ -26,7 +26,7 @@ export async function loadDashboardStatsForTenant(tenantId: string) {
       },
     }),
     prisma.product.findMany({
-      where: { tenantId },
+      where: { tenantId, isRetired: false },
       orderBy: { quantity: 'asc' },
       select: {
         id: true,
@@ -53,7 +53,7 @@ export async function loadDashboardStatsForTenant(tenantId: string) {
   ).length
   const outOfStockCount = products.filter((p) => (p.quantity ?? 0) === 0).length
   const inventoryValue = products.reduce(
-    (sum, p) => sum + (p.quantity ?? 0) * Number(p.unitPrice ?? 0),
+    (sum, p) => sum + (p.quantity ?? 0) * Number(p.price ?? 0),
     0
   )
   const todaySalesCount = todaySales.length
