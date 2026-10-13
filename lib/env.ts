@@ -19,6 +19,29 @@ function optionalEnv(name: string): string | undefined {
   return value && !PLACEHOLDER_VALUES.has(value) ? value : undefined
 }
 
+/** Fix common Neon / psql paste mistakes before Prisma reads DATABASE_URL. */
+export function normalizeDatabaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  let value = raw.trim()
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim()
+  }
+  const psqlMatch = value.match(/^psql\s+(['"])?(postgresql:\/\/.+)\1\s*$/i)
+  if (psqlMatch) value = psqlMatch[2]
+  // Node pg / Prisma: channel_binding often breaks pooler connections on Windows.
+  value = value.replace(/([?&])channel_binding=[^&]*&?/gi, (_, sep) => (sep === '?' ? '?' : ''))
+  value = value.replace(/\?&/, '?').replace(/[?&]$/, '')
+  return value
+}
+
+export function applyDatabaseUrlNormalization() {
+  const normalized = normalizeDatabaseUrl(process.env.DATABASE_URL)
+  if (normalized) process.env.DATABASE_URL = normalized
+}
+
 function requireLongSecret(name: string, minLength = 32): string {
   const value = requireEnv(name)
   if (value.length < minLength) {

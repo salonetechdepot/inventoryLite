@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client'
-import { validateServerEnv } from './env'
+import { applyDatabaseUrlNormalization, validateServerEnv } from './env'
+
+applyDatabaseUrlNormalization()
 
 export type { Prisma } from '@prisma/client'
 

@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSession, ensureTenantWorkspace } from '@/lib/auth'
 import { LITE_INVENTORY_MODULE_ID, SUPER_ADMIN_ROLE } from '@/lib/constants'
-import { parseJsonBody } from '@/lib/api-validation'
-import { getTenantLockInfo, lockedAccountResponse } from '@/lib/tenant-lock'
+import { entityIdSchema, parseJsonBody } from '@/lib/api-validation'
+import { establishLiteSession } from '@/lib/lite-session'
 
 const establishSchema = z.object({
   token: z.string().min(1),
-  tenantId: z.string().uuid(),
+  tenantId: entityIdSchema,
   email: z.string().optional().default(''),
   phoneE164: z.string().nullable().optional(),
   businessName: z.string().min(1),
@@ -52,11 +51,6 @@ export async function POST(request: Request) {
       )
     }
 
-    const lock = await getTenantLockInfo(tenantId)
-    if (lock.isLocked) {
-      return lockedAccountResponse(lock)
-    }
-
     const tenant = {
       token,
       tenantId,
@@ -67,10 +61,13 @@ export async function POST(request: Request) {
       modules,
     }
 
-    const user = await ensureTenantWorkspace(tenant)
-    const { expiresAt: sessionExpiresAt } = await createSession(tenant)
+    const session = await establishLiteSession(tenant)
+    if (!session.ok) return session.response
 
-    return NextResponse.json({ user, sessionExpiresAt })
+    return NextResponse.json({
+      user: session.user,
+      sessionExpiresAt: session.sessionExpiresAt,
+    })
   } catch (error) {
     console.error('Establish session error:', error)
     return NextResponse.json({ error: 'Could not establish session' }, { status: 500 })

@@ -26,6 +26,11 @@ export function getRoarbyteApiOrigin(): string {
   }
 }
 
+export function getAuthMeUrl(): string {
+  const origin = getRoarbyteApiOrigin()
+  return origin ? `${origin}/api/Auth/me` : ''
+}
+
 export const roarbyteApi = axios.create({
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -276,6 +281,162 @@ export type LoginConfirmFailureReason =
   | 'access_denied_module'
   | 'api_error'
 
+function authorizedTenantFromAuthPayload(
+  data: LoginConfirmPayload,
+  accessToken: string,
+  identityHint?: string
+):
+  | { ok: true; tenant: AuthorizedTenant }
+  | { ok: false; error: string; reason: LoginConfirmFailureReason } {
+  const user = data.user ?? {}
+  const token =
+    pickString(accessToken, data.token, data.access_token, data.accessToken, data.Token, data.AccessToken) ??
+    ''
+  const jwtClaims = token ? decodeJwtPayload(token) : null
+  const loginInfo = asRecord(data.login_information) ?? asRecord(data.loginInformation) ?? {}
+  const responseSources = [jwtClaims ?? {}, loginInfo, data as Record<string, unknown>, { user }]
+
+  const tenantId = pickString(
+    user.tenant_id,
+    data.tenant_id,
+    data.tenantId,
+    data.TenantId,
+    loginInfo.tenant_id,
+    loginInfo.tenantId,
+    jwtClaims?.tenant_id,
+    jwtClaims?.tenantId,
+    jwtClaims?.TenantId,
+    jwtClaims?.tid
+  )
+
+  if (!token) {
+    return {
+      ok: false,
+      error: 'Login succeeded but no access token was returned.',
+      reason: 'missing_token',
+    }
+  }
+  if (!tenantId) {
+    return {
+      ok: false,
+      error: 'Login succeeded but no tenant id was returned.',
+      reason: 'missing_tenant',
+    }
+  }
+
+  const roles = uniqueRoles(responseSources)
+  const modules = uniqueModules(responseSources)
+
+  if (!hasSuperAdmin(roles)) {
+    return {
+      ok: false,
+      error: 'Access denied. Only SuperAdmin users can sign in to this app.',
+      reason: 'access_denied_role',
+    }
+  }
+
+  if (!subscriptionActive(responseSources)) {
+    return {
+      ok: false,
+      error: 'Access denied. An active subscription is required.',
+      reason: 'access_denied_subscription',
+    }
+  }
+
+  if (!hasLiteInventoryModule(modules)) {
+    return {
+      ok: false,
+      error: 'Access denied. Lite Inventory System module is not active for this account.',
+      reason: 'access_denied_module',
+    }
+  }
+
+  const hint = identityHint?.trim() ?? ''
+  const email =
+    pickString(
+      user.email,
+      data.email,
+      loginInfo.email,
+      jwtClaims?.email,
+      hint.includes('@') ? hint : null
+    ) ?? ''
+  const phoneE164 = pickString(
+    user.phone,
+    data.phone_e164,
+    data.phone,
+    loginInfo.phone_e164,
+    loginInfo.phone,
+    hint && !hint.includes('@') ? hint : null
+  )
+  const businessName =
+    pickString(
+      user.tenant_name,
+      data.business_name,
+      data.businessName,
+      data.name,
+      loginInfo.business_name,
+      loginInfo.businessName,
+      loginInfo.name,
+      jwtClaims?.business_name,
+      jwtClaims?.businessName,
+      user.first_name && user.last_name ? `${user.first_name} ${user.last_name}`.trim() : null
+    ) ?? 'My Shop'
+
+  return {
+    ok: true,
+    tenant: {
+      token,
+      tenantId,
+      email,
+      phoneE164,
+      businessName,
+      roles,
+      modules,
+    },
+  }
+}
+
+/** GET /api/Auth/me — validate portal SSO access token. */
+export async function authorizeAccessToken(
+  accessToken: string
+): Promise<
+  | { ok: true; tenant: AuthorizedTenant }
+  | { ok: false; error: string; reason: LoginConfirmFailureReason }
+> {
+  const url = getAuthMeUrl()
+  if (!url) {
+    return { ok: false, error: 'API_URL is not configured', reason: 'api_error' }
+  }
+
+  const trimmed = accessToken.trim()
+  if (!trimmed) {
+    return { ok: false, error: 'Missing access token.', reason: 'missing_token' }
+  }
+
+  try {
+    const { data } = await roarbyteApi.get<LoginConfirmPayload>(url, {
+      headers: { Authorization: `Bearer ${trimmed}` },
+    })
+
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[auth/me] Roarbyte portal token validated')
+    }
+
+    return authorizedTenantFromAuthPayload(data, trimmed)
+  } catch (error) {
+    const message = apiErrorMessage(error, 'Sign-in link expired or invalid.')
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[auth/me] Portal token rejected', { status, message })
+    }
+    return {
+      ok: false,
+      error: status === 401 || status === 403 ? 'Sign-in link expired or invalid.' : message,
+      reason: status === 401 || status === 403 ? 'invalid_otp' : 'api_error',
+    }
+  }
+}
+
 export async function confirmLoginOtp(
   emailOrPhone: string,
   code: string
@@ -297,130 +458,27 @@ export async function confirmLoginOtp(
       code: normalizedCode,
     })
 
-    const user = data.user ?? {}
-    const token =
-      pickString(data.token, data.access_token, data.accessToken, data.Token, data.AccessToken) ?? ''
-    const jwtClaims = token ? decodeJwtPayload(token) : null
-    const loginInfo =
-      asRecord(data.login_information) ??
-      asRecord(data.loginInformation) ??
-      {}
-    const responseSources = [
-      jwtClaims ?? {},
-      loginInfo,
-      data as Record<string, unknown>,
-      { user },
-    ]
-
-    const tenantId = pickString(
-      user.tenant_id,
-      data.tenant_id,
-      data.tenantId,
-      data.TenantId,
-      loginInfo.tenant_id,
-      loginInfo.tenantId,
-      jwtClaims?.tenant_id,
-      jwtClaims?.tenantId,
-      jwtClaims?.TenantId,
-      jwtClaims?.tid
-    )
-
-    if (!token) {
-      return {
-        ok: false,
-        error: 'Login succeeded but no access token was returned.',
-        reason: 'missing_token',
-      }
-    }
-    if (!tenantId) {
-      return {
-        ok: false,
-        error: 'Login succeeded but no tenant id was returned.',
-        reason: 'missing_tenant',
-      }
-    }
-
-    const roles = uniqueRoles(responseSources)
-    const modules = uniqueModules(responseSources)
-
     if (process.env.NODE_ENV === 'development') {
+      const user = data.user ?? {}
+      const token =
+        pickString(data.token, data.access_token, data.accessToken, data.Token, data.AccessToken) ?? ''
+      const jwtClaims = token ? decodeJwtPayload(token) : null
+      const loginInfo = asRecord(data.login_information) ?? asRecord(data.loginInformation) ?? {}
+      const responseSources = [jwtClaims ?? {}, loginInfo, data as Record<string, unknown>, { user }]
       console.info('[login/confirm] Roarbyte auth response', {
         email_or_phone: normalizedIdentity,
-        roles,
-        modules: modules.map((module) => ({ id: module.id, name: module.name })),
+        roles: uniqueRoles(responseSources),
+        modules: uniqueModules(responseSources).map((module) => ({
+          id: module.id,
+          name: module.name,
+        })),
         subscription_active: responseSources.map((source) => source.subscription_active),
-        has_tenant_id: Boolean(tenantId),
       })
     }
 
-    if (!hasSuperAdmin(roles)) {
-      return {
-        ok: false,
-        error: 'Access denied. Only SuperAdmin users can sign in to this app.',
-        reason: 'access_denied_role',
-      }
-    }
-
-    if (!subscriptionActive(responseSources)) {
-      return {
-        ok: false,
-        error: 'Access denied. An active subscription is required.',
-        reason: 'access_denied_subscription',
-      }
-    }
-
-    if (!hasLiteInventoryModule(modules)) {
-      return {
-        ok: false,
-        error: 'Access denied. Lite Inventory System module is not active for this account.',
-        reason: 'access_denied_module',
-      }
-    }
-
-    const email =
-      pickString(
-        user.email,
-        data.email,
-        loginInfo.email,
-        jwtClaims?.email,
-        emailOrPhone.includes('@') ? emailOrPhone : null
-      ) ?? ''
-    const phoneE164 = pickString(
-      user.phone,
-      data.phone_e164,
-      data.phone,
-      loginInfo.phone_e164,
-      loginInfo.phone,
-      !emailOrPhone.includes('@') ? emailOrPhone : null
-    )
-    const businessName =
-      pickString(
-        user.tenant_name,
-        data.business_name,
-        data.businessName,
-        data.name,
-        loginInfo.business_name,
-        loginInfo.businessName,
-        loginInfo.name,
-        jwtClaims?.business_name,
-        jwtClaims?.businessName,
-        user.first_name && user.last_name
-          ? `${user.first_name} ${user.last_name}`.trim()
-          : null
-      ) ?? 'My Shop'
-
-    return {
-      ok: true,
-      tenant: {
-        token,
-        tenantId,
-        email,
-        phoneE164,
-        businessName,
-        roles,
-        modules,
-      },
-    }
+    const token =
+      pickString(data.token, data.access_token, data.accessToken, data.Token, data.AccessToken) ?? ''
+    return authorizedTenantFromAuthPayload(data, token, normalizedIdentity)
   } catch (error) {
     const message = apiErrorMessage(error, 'Could not verify code')
     const status = axios.isAxiosError(error) ? error.response?.status : undefined

@@ -51,6 +51,7 @@ type AuthState = {
     emailOrPhone?: string
   ) => Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }>
   establishServerSession: (tenant: AuthorizedTenant) => Promise<AuthUser>
+  completePortalHandoff: (accessToken: string) => Promise<AuthUser>
   logout: () => Promise<void>
 }
 
@@ -151,9 +152,32 @@ export const useAuthStore = create<AuthState>()(
         if (!res.ok) {
           throw new Error(data.error || "Could not establish session")
         }
-        if (typeof data.sessionExpiresAt === "string") {
-          set({ sessionExpiresAt: data.sessionExpiresAt })
+        set({
+          user: data.user as AuthUser,
+          accessToken: tenant.token,
+          sessionExpiresAt:
+            typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
+        })
+        void runDeltaSync({ full: true })
+        return data.user as AuthUser
+      },
+
+      completePortalHandoff: async (accessToken) => {
+        const res = await fetch("/api/auth/sso", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: accessToken }),
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.error || "Sign-in link expired or invalid.")
         }
+        set({
+          user: data.user as AuthUser,
+          accessToken,
+          sessionExpiresAt:
+            typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
+        })
         void runDeltaSync({ full: true })
         return data.user as AuthUser
       },
