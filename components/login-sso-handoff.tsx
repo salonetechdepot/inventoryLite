@@ -10,15 +10,36 @@ type LoginSsoHandoffProps = {
   onBusyChange: (busy: boolean) => void
 }
 
-function pickPortalToken(params: URLSearchParams): string | null {
-  const token = params.get("token")?.trim() || params.get("access_token")?.trim()
-  return token || null
+const PORTAL_TOKEN_QUERY_KEYS = [
+  "token",
+  "access_token",
+  "accessToken",
+  "access-token",
+] as const
+
+function pickPortalTokenFromSearch(params: URLSearchParams): string | null {
+  for (const key of PORTAL_TOKEN_QUERY_KEYS) {
+    const value = params.get(key)?.trim()
+    if (value) return value
+  }
+  return null
+}
+
+/** Some portals put the JWT in the hash (#access_token=…) instead of ?query=. */
+function pickPortalTokenFromHash(): string | null {
+  if (typeof window === "undefined") return null
+  const raw = window.location.hash.replace(/^#/, "").trim()
+  if (!raw) return null
+  const hashParams = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw)
+  return pickPortalTokenFromSearch(hashParams)
 }
 
 function stripTokenFromUrl() {
   const url = new URL(window.location.href)
-  url.searchParams.delete("token")
-  url.searchParams.delete("access_token")
+  for (const key of PORTAL_TOKEN_QUERY_KEYS) {
+    url.searchParams.delete(key)
+  }
+  url.hash = ""
   const next = `${url.pathname}${url.search}${url.hash}`
   window.history.replaceState(window.history.state, "", next)
 }
@@ -31,7 +52,8 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
   const [signingIn, setSigningIn] = useState(false)
 
   useEffect(() => {
-    const token = pickPortalToken(searchParams)
+    const token =
+      pickPortalTokenFromSearch(searchParams) ?? pickPortalTokenFromHash()
     if (!token) {
       onBusyChange(false)
       return

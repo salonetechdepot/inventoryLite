@@ -79,6 +79,12 @@ The build script runs `prisma generate`, `prisma migrate deploy`, then `next bui
 
 Login requires **SuperAdmin** role, an **active subscription**, and module id `22222222-2222-2222-2222-222222222203` (Lite Inventory System). Data is scoped by `tenant_id` from the login token and stored on the main app database: `tenants`, `products`, `stock_levels`, `retail_receipts` / `retail_sales` / `retail_payments`, plus lite extension tables (`retail_tenant_settings`, `retail_category_meta`, `retail_product_meta`, `idempotency_keys`, `day_closes`).
 
+**Portal SSO (main app → BIVA):** when opening Lite from Roarbyte, redirect to a login URL that includes the user’s Roarbyte **access token** (same JWT used for `/api/Auth/me`), for example:
+
+`https://<lite-host>/login?token=<access_token>`
+
+Also supported: `/login/dashboard?token=…`, query names `access_token` / `accessToken`, or hash `#access_token=…`. A bare `/login/dashboard` with no token only shows the normal OTP login — the main app must append the token on redirect.
+
 ### Operator console (developer only)
 
 Not part of the shop UI.
