@@ -182,12 +182,53 @@ function uniqueRoles(sources: Record<string, unknown>[]): string[] {
   return roles
 }
 
+function moduleFromId(id: string, isActive = true): ExternalModule {
+  return {
+    id,
+    is_active: isActive,
+    ...(id.toLowerCase() === LITE_INVENTORY_MODULE_ID.toLowerCase()
+      ? { name: 'Lite Inventory System' }
+      : {}),
+  }
+}
+
+function collectModuleIdLists(source: Record<string, unknown>): ExternalModule[] {
+  const modules: ExternalModule[] = []
+  const listKeys = [
+    'module_ids',
+    'moduleIds',
+    'active_module_ids',
+    'activeModuleIds',
+    'tenant_module_ids',
+    'tenantModuleIds',
+  ]
+  for (const key of listKeys) {
+    const bucket = source[key]
+    if (!Array.isArray(bucket)) continue
+    for (const item of bucket) {
+      if (typeof item === 'string' && item.trim()) {
+        modules.push(moduleFromId(item.trim()))
+      }
+    }
+  }
+
+  if (source.lite_inventory === true || source.has_lite_inventory === true) {
+    modules.push(moduleFromId(LITE_INVENTORY_MODULE_ID))
+  }
+
+  return modules
+}
+
 function collectModules(source: Record<string, unknown>): ExternalModule[] {
-  const buckets = [source.modules, source.Modules]
+  const buckets = [source.modules, source.Modules, source.tenant_modules, source.tenantModules]
   const modules: ExternalModule[] = []
   for (const bucket of buckets) {
     if (!Array.isArray(bucket)) continue
     for (const item of bucket) {
+      if (typeof item === 'string' && item.trim()) {
+        modules.push(moduleFromId(item.trim()))
+        continue
+      }
       const row = asRecord(item)
       if (!row) continue
       const id = pickString(row.id, row.Id, row.module_id, row.moduleId)
@@ -205,6 +246,21 @@ function collectModules(source: Record<string, unknown>): ExternalModule[] {
       })
     }
   }
+
+  modules.push(...collectModuleIdLists(source))
+
+  const tenant = asRecord(source.tenant) ?? asRecord(source.Tenant)
+  if (tenant) {
+    modules.push(...collectModules(tenant))
+    modules.push(...collectModuleIdLists(tenant))
+  }
+
+  const user = asRecord(source.user)
+  if (user) {
+    modules.push(...collectModules(user))
+    modules.push(...collectModuleIdLists(user))
+  }
+
   return modules
 }
 
@@ -295,6 +351,37 @@ function hasLiteInventoryModule(modules: ExternalModule[]): boolean {
     const active = module.is_active !== false && module.isActive !== false
     return active && module.id.toLowerCase() === LITE_INVENTORY_MODULE_ID.toLowerCase()
   })
+}
+
+function liteModuleExplicitlyInactive(modules: ExternalModule[]): boolean {
+  const liteId = LITE_INVENTORY_MODULE_ID.toLowerCase()
+  return modules.some(
+    (module) =>
+      module.id.toLowerCase() === liteId &&
+      (module.is_active === false || module.isActive === false)
+  )
+}
+
+function liteInventoryAccessAllowed(
+  modules: ExternalModule[],
+  options?: AuthPayloadOptions
+): boolean {
+  if (hasLiteInventoryModule(modules)) return true
+  if (!options?.trustPortalSession) return false
+  if (liteModuleExplicitlyInactive(modules)) return false
+  // User opened Lite from the main portal; /api/Auth/me often omits module lists.
+  return true
+}
+
+function resolveModulesForTenant(
+  modules: ExternalModule[],
+  options?: AuthPayloadOptions
+): ExternalModule[] {
+  if (hasLiteInventoryModule(modules)) return modules
+  if (options?.trustPortalSession && liteInventoryAccessAllowed(modules, options)) {
+    return [...modules, moduleFromId(LITE_INVENTORY_MODULE_ID)]
+  }
+  return modules
 }
 
 export function apiErrorMessage(error: unknown, fallback = 'Request failed'): string {
@@ -399,13 +486,15 @@ function authorizedTenantFromAuthPayload(
     }
   }
 
-  if (!hasLiteInventoryModule(modules)) {
+  if (!liteInventoryAccessAllowed(modules, options)) {
     return {
       ok: false,
       error: 'Access denied. Lite Inventory System module is not active for this account.',
       reason: 'access_denied_module',
     }
   }
+
+  const resolvedModules = resolveModulesForTenant(modules, options)
 
   const hint = identityHint?.trim() ?? ''
   const email =
@@ -447,7 +536,7 @@ function authorizedTenantFromAuthPayload(
       phoneE164,
       businessName,
       roles,
-      modules,
+      modules: resolvedModules,
     },
   }
 }
