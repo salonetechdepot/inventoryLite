@@ -218,17 +218,72 @@ function uniqueModules(sources: Record<string, unknown>[]): ExternalModule[] {
   return [...byId.values()]
 }
 
-function subscriptionActiveIn(source: Record<string, unknown>): boolean {
-  if (source.subscription_active === true) return true
-  const sub = asRecord(source.subscription) ?? asRecord(source.Subscription)
-  if (!sub) return false
+function subscriptionRecordActive(sub: Record<string, unknown>): boolean {
   if (sub.is_active === true || sub.isActive === true) return true
   const status = pickString(sub.status, sub.Status)?.toLowerCase()
   return status === 'active' || status === 'paid' || status === 'trialing'
 }
 
-function subscriptionActive(sources: Record<string, unknown>[]): boolean {
-  return sources.some(subscriptionActiveIn)
+function subscriptionActiveIn(source: Record<string, unknown>): boolean {
+  if (source.subscription_active === true || source.has_active_subscription === true) return true
+  if (source.is_subscribed === true || source.isSubscribed === true) return true
+
+  const sub = asRecord(source.subscription) ?? asRecord(source.Subscription)
+  if (sub && subscriptionRecordActive(sub)) return true
+
+  const tenant = asRecord(source.tenant) ?? asRecord(source.Tenant)
+  if (tenant) {
+    if (tenant.subscription_active === true) return true
+    const tenantSub = asRecord(tenant.subscription) ?? asRecord(tenant.Subscription)
+    if (tenantSub && subscriptionRecordActive(tenantSub)) return true
+  }
+
+  const user = asRecord(source.user)
+  if (user) {
+    if (user.subscription_active === true || user.has_active_subscription === true) return true
+    const userSub = asRecord(user.subscription) ?? asRecord(user.Subscription)
+    if (userSub && subscriptionRecordActive(userSub)) return true
+  }
+
+  return false
+}
+
+function subscriptionExplicitlyInactiveIn(source: Record<string, unknown>): boolean {
+  if (source.subscription_active === false || source.has_active_subscription === false) return true
+
+  const sub = asRecord(source.subscription) ?? asRecord(source.Subscription)
+  if (sub) {
+    if (sub.is_active === false || sub.isActive === false) return true
+    const status = pickString(sub.status, sub.Status)?.toLowerCase()
+    if (
+      status &&
+      (status === 'inactive' ||
+        status === 'cancelled' ||
+        status === 'canceled' ||
+        status === 'expired' ||
+        status === 'past_due')
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+type AuthPayloadOptions = {
+  /** Portal SSO: /api/Auth/me often omits subscription flags though the user already passed main-app gates. */
+  trustPortalSession?: boolean
+}
+
+function subscriptionActive(
+  sources: Record<string, unknown>[],
+  options?: AuthPayloadOptions
+): boolean {
+  if (sources.some(subscriptionActiveIn)) return true
+  if (options?.trustPortalSession && !sources.some(subscriptionExplicitlyInactiveIn)) {
+    return true
+  }
+  return false
 }
 
 function hasSuperAdmin(roles: string[]): boolean {
@@ -284,7 +339,8 @@ export type LoginConfirmFailureReason =
 function authorizedTenantFromAuthPayload(
   data: LoginConfirmPayload,
   accessToken: string,
-  identityHint?: string
+  identityHint?: string,
+  options?: AuthPayloadOptions
 ):
   | { ok: true; tenant: AuthorizedTenant }
   | { ok: false; error: string; reason: LoginConfirmFailureReason } {
@@ -335,7 +391,7 @@ function authorizedTenantFromAuthPayload(
     }
   }
 
-  if (!subscriptionActive(responseSources)) {
+  if (!subscriptionActive(responseSources, options)) {
     return {
       ok: false,
       error: 'Access denied. An active subscription is required.',
@@ -422,7 +478,9 @@ export async function authorizeAccessToken(
       console.info('[auth/me] Roarbyte portal token validated')
     }
 
-    return authorizedTenantFromAuthPayload(data, trimmed)
+    return authorizedTenantFromAuthPayload(data, trimmed, undefined, {
+      trustPortalSession: true,
+    })
   } catch (error) {
     const message = apiErrorMessage(error, 'Sign-in link expired or invalid.')
     const status = axios.isAxiosError(error) ? error.response?.status : undefined
