@@ -24,7 +24,7 @@ export function BottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card pb-[env(safe-area-inset-bottom)]">
-      <div className="mx-auto flex h-16 max-w-lg items-center justify-around">
+      <div className="grid h-16 w-full grid-cols-6">
         {navItems.map((item) => {
           const isActive =
             pathname === item.href ||
@@ -35,15 +35,17 @@ export function BottomNav() {
               type="button"
               onClick={() => navigate(item.href)}
               className={cn(
-                "flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl transition-colors",
+                "flex min-w-0 flex-col items-center justify-center gap-0.5 px-0.5 py-1 transition-colors",
                 isActive
                   ? "text-primary bg-primary/10"
                   : "text-muted-foreground hover:text-foreground"
               )}
               aria-current={isActive ? "page" : undefined}
             >
-              <item.icon className="size-6" />
-              <span className="text-xs font-medium">{item.label}</span>
+              <item.icon className="size-5 shrink-0" />
+              <span className="w-full truncate text-center text-[10px] font-medium leading-tight sm:text-xs">
+                {item.label}
+              </span>
             </button>
           )
         })}

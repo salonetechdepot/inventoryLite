@@ -34,6 +34,21 @@ const CACHE_STORE = "cache"
 const QUEUE_STORE = "queue"
 const CONFLICT_STORE = "conflicts"
 const MAX_RETRY_COUNT = 5
+/** Fail fast so a dead connection cannot pin the UI on skeletons or “Syncing…”. */
+const FETCH_DEADLINE_MS = 8_000
+const CACHED_FETCH_DEADLINE_MS = 2_500
+
+function fetchWithDeadline(
+  url: string,
+  init: RequestInit,
+  ms: number
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
+    clearTimeout(timer)
+  )
+}
 const PRODUCTS_CACHE_KEY = "/api/products"
 export { PRODUCTS_CACHE_KEY }
 /** Stable SWR keys — filters are client-side so offline cache always hits. */
@@ -52,6 +67,7 @@ export const OFFLINE_DATA_CACHE_KEYS = [
   DASHBOARD_STATS_CACHE_KEY,
   SALE_RECEIPTS_CACHE_KEY,
   RETURN_RECEIPTS_CACHE_KEY,
+  ANALYTICS_CACHE_KEY,
 ] as const
 
 /** Slow heartbeat — event-driven sync handles most updates. */
@@ -1132,6 +1148,53 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
   return record.data as T
 }
 
+/** Quantities still returnable, using saved sales and returns when the API is unreachable. */
+export async function loadReturnableFromCache(receiptId: string): Promise<{
+  customer_name: string | null
+  customer_phone: string | null
+  original_receipt: { id: string; created_at: string | Date; net_amount: number }
+  lines: Array<{ product_id: string; returnable_quantity: number }>
+} | null> {
+  const salesData = await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY)
+  const returnData = await getCachedData<{ receipts: CachedReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)
+  const original = salesData?.receipts?.find((receipt) => receipt.id === receiptId)
+  if (!original) return null
+
+  const sold = new Map<string, number>()
+  for (const line of original.sales ?? []) {
+    if (!line.product_id) continue
+    sold.set(line.product_id, (sold.get(line.product_id) ?? 0) + line.quantity_sold)
+  }
+
+  const returned = new Map<string, number>()
+  for (const receipt of returnData?.receipts ?? []) {
+    if (receipt.original_receipt_id !== receiptId) continue
+    for (const line of receipt.sales ?? []) {
+      if (!line.product_id) continue
+      returned.set(line.product_id, (returned.get(line.product_id) ?? 0) + line.quantity_sold)
+    }
+  }
+
+  const lines: Array<{ product_id: string; returnable_quantity: number }> = []
+  for (const [productId, quantity] of sold) {
+    const returnable = Math.max(0, quantity - (returned.get(productId) ?? 0))
+    if (returnable > 0) {
+      lines.push({ product_id: productId, returnable_quantity: returnable })
+    }
+  }
+
+  return {
+    customer_name: original.customer_name,
+    customer_phone: original.customer_phone,
+    original_receipt: {
+      id: original.id,
+      created_at: original.created_at,
+      net_amount: original.net_amount,
+    },
+    lines,
+  }
+}
+
 export async function getCacheUpdatedAt(key: string): Promise<number | null> {
   if (!isBrowser()) return null
   const db = await openDb()
@@ -1364,7 +1427,11 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
         ? "/api/sync?full=1"
         : `/api/sync?since=${encodeURIComponent(cursorState.cursor)}`
 
-    const res = await fetch(syncUrl, { credentials: "same-origin" })
+    const res = await fetchWithDeadline(
+      syncUrl,
+      { credentials: "same-origin" },
+      FETCH_DEADLINE_MS
+    )
     if (!res.ok || isOfflineGatewayResponse(res)) {
       const fallbackOk = await refreshOfflineDataViaIndividualFetches()
       return fallbackOk
@@ -1418,6 +1485,12 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
 
     await cacheData(DASHBOARD_STATS_CACHE_KEY, payload.stats)
     await mutate(DASHBOARD_STATS_CACHE_KEY, payload.stats, { revalidate: false })
+
+    try {
+      await fetchWithOfflineCache(ANALYTICS_CACHE_KEY)
+    } catch {
+      // Reports can stay on the last saved copy if this request fails.
+    }
 
     await saveSyncCursor({
       tenantId,
@@ -1514,8 +1587,11 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
     return readFromOfflineCache<T>(cacheKey)
   }
 
+  const cached = await getCachedData<T>(cacheKey)
+  const deadline = cached !== null ? CACHED_FETCH_DEADLINE_MS : FETCH_DEADLINE_MS
+
   try {
-    const res = await fetch(url)
+    const res = await fetchWithDeadline(url, { credentials: "same-origin" }, deadline)
     if (!res.ok || isOfflineGatewayResponse(res)) {
       throw new Error(`Failed request (${res.status})`)
     }
@@ -1578,15 +1654,19 @@ export async function sendOrQueueMutation(input: {
 
   try {
     const body = remapIdsInBody(input.body, {})
-    const response = await fetch(input.url, {
-      method: input.method,
-      headers: mergeSyncHeaders(
-        { url: input.url, method: input.method, headers: input.headers },
-        body
-      ),
-      credentials: "same-origin",
-      body: body ? JSON.stringify(body) : undefined,
-    })
+    const response = await fetchWithDeadline(
+      input.url,
+      {
+        method: input.method,
+        headers: mergeSyncHeaders(
+          { url: input.url, method: input.method, headers: input.headers },
+          body
+        ),
+        credentials: "same-origin",
+        body: body ? JSON.stringify(body) : undefined,
+      },
+      FETCH_DEADLINE_MS
+    )
 
     if (!response.ok) {
       if (isOfflineGatewayResponse(response)) {
@@ -1683,12 +1763,16 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
     const mappedBody = remapIdsInBody(mutation.body, tempIdMap)
 
     try {
-      const res = await fetch(mappedUrl, {
-        method: mutation.method,
-        headers: mergeSyncHeaders({ ...mutation, url: mappedUrl }, mappedBody),
-        credentials: "same-origin",
-        body: mappedBody ? JSON.stringify(mappedBody) : undefined,
-      })
+      const res = await fetchWithDeadline(
+        mappedUrl,
+        {
+          method: mutation.method,
+          headers: mergeSyncHeaders({ ...mutation, url: mappedUrl }, mappedBody),
+          credentials: "same-origin",
+          body: mappedBody ? JSON.stringify(mappedBody) : undefined,
+        },
+        FETCH_DEADLINE_MS
+      )
 
       if (res.ok || shouldTreatAsSuccess(mutation, res.status)) {
         await deleteFromStore(QUEUE_STORE, mutation.id)

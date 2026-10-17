@@ -3,6 +3,7 @@ export const DASHBOARD_OFFLINE_ROUTES = [
   "/login",
   "/dashboard",
   "/dashboard/products",
+  "/dashboard/products/new",
   "/dashboard/sell",
   "/dashboard/sales",
   "/dashboard/returns",
@@ -52,14 +53,17 @@ export function prefetchDashboardRoutes(
 export async function warmDashboardRscCache(): Promise<void> {
   if (isBrowserOffline()) return
   await Promise.allSettled(
-    DASHBOARD_OFFLINE_ROUTES.map((route) =>
-      fetch(route, {
+    DASHBOARD_OFFLINE_ROUTES.map((route) => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 4_000)
+      return fetch(route, {
         credentials: "same-origin",
         headers: {
           RSC: "1",
           "Next-Router-Prefetch": "1",
         },
-      })
-    )
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer))
+    })
   )
 }

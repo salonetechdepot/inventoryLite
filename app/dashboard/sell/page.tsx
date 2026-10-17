@@ -51,7 +51,7 @@ import {
 } from "@/components/ui/drawer"
 import { cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
-import { fetchWithOfflineCache, sendOrQueueMutation } from "@/lib/offline-sync"
+import { fetchWithOfflineCache, loadReturnableFromCache, sendOrQueueMutation } from "@/lib/offline-sync"
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import {
@@ -143,7 +143,7 @@ function SellPageContent() {
   const [originalReceiptId, setOriginalReceiptId] = useState<string | null>(null)
   const [linkedSale, setLinkedSale] = useState<{
     id: string
-    created_at: string
+    created_at: string | Date
     net_amount: number
   } | null>(null)
   const [returnableMax, setReturnableMax] = useState<Record<string, number>>({})
@@ -212,10 +212,16 @@ function SellPageContent() {
     if (!from || products.length === 0) return
 
     const loadReturnable = async () => {
-      try {
-        const res = await fetch(`/api/receipts/${from}/returnable`)
-        if (!res.ok) return
-        const data = await res.json()
+      const apply = (data: {
+        customer_name?: string | null
+        customer_phone?: string | null
+        original_receipt?: {
+          id: string
+          created_at: string | Date
+          net_amount: number
+        } | null
+        lines?: Array<{ product_id: string; returnable_quantity: number }>
+      }) => {
         if (data.customer_name) setCustomerName(data.customer_name)
         if (data.customer_phone) setCustomerPhone(data.customer_phone)
         if (data.original_receipt) {
@@ -223,10 +229,7 @@ function SellPageContent() {
         }
         const maxMap: Record<string, number> = {}
         const items: CartItem[] = []
-        for (const line of data.lines as Array<{
-          product_id: string
-          returnable_quantity: number
-        }>) {
+        for (const line of data.lines ?? []) {
           maxMap[line.product_id] = line.returnable_quantity
           const product = products.find((p) => p.id === line.product_id)
           if (product && line.returnable_quantity > 0) {
@@ -240,8 +243,30 @@ function SellPageContent() {
         }
         setReturnableMax(maxMap)
         if (items.length > 0) setCart(items)
+      }
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const cached = await loadReturnableFromCache(from)
+        if (cached) apply(cached)
+        return
+      }
+
+      try {
+        const controller = new AbortController()
+        const timer = window.setTimeout(() => controller.abort(), 4000)
+        const res = await fetch(`/api/receipts/${from}/returnable`, {
+          signal: controller.signal,
+        }).finally(() => window.clearTimeout(timer))
+        if (!res.ok) {
+          const cached = await loadReturnableFromCache(from)
+          if (cached) apply(cached)
+          return
+        }
+        const data = await res.json()
+        apply(data)
       } catch {
-        // Offline: user can still add return items manually
+        const cached = await loadReturnableFromCache(from)
+        if (cached) apply(cached)
       }
     }
 

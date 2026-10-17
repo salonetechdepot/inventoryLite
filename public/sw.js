@@ -107,23 +107,72 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
+    (async () => {
+      const keys = await caches.keys()
+      const runtime = await caches.open(RUNTIME_CACHE)
+      await Promise.all(
         keys
           .filter((key) => key !== STATIC_CACHE && key !== RUNTIME_CACHE)
-          .map((key) => caches.delete(key))
+          .map(async (key) => {
+            if (key.startsWith("biva-runtime-")) {
+              const previous = await caches.open(key)
+              const requests = await previous.keys()
+              await Promise.all(
+                requests.map(async (request) => {
+                  const response = await previous.match(request)
+                  if (response) await runtime.put(request, response)
+                })
+              )
+            }
+            await caches.delete(key)
+          })
       )
-    )
+    })()
   )
   self.clients.claim()
 })
+
+function fetchWithTimeout(request, ms) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return fetch(request, { signal: controller.signal }).finally(() =>
+    clearTimeout(timer)
+  )
+}
+
+function isImageRequest(request) {
+  return request.destination === "image"
+}
+
+async function cacheFirstImage(request) {
+  const cached = await caches.match(request)
+  if (cached) return cached
+  if (!self.navigator.onLine) {
+    return new Response("", { status: 503, statusText: "Offline" })
+  }
+  try {
+    const networkResponse = await fetchWithTimeout(request, 8000)
+    if (networkResponse && (networkResponse.ok || networkResponse.type === "opaque")) {
+      const cache = await caches.open(RUNTIME_CACHE)
+      await cache.put(request, networkResponse.clone())
+    }
+    return networkResponse
+  } catch {
+    return new Response("", { status: 503, statusText: "Offline" })
+  }
+}
 
 self.addEventListener("fetch", (event) => {
   const request = event.request
   if (request.method !== "GET") return
 
   const url = new URL(request.url)
-  if (url.origin !== self.location.origin) return
+
+  if (url.origin !== self.location.origin) {
+    if (!isImageRequest(request)) return
+    event.respondWith(cacheFirstImage(request))
+    return
+  }
 
   // API + mutations are handled in the app (IndexedDB) — never intercept.
   if (url.pathname.startsWith("/api/")) return
@@ -139,17 +188,38 @@ self.addEventListener("fetch", (event) => {
       (async () => {
         const cache = await caches.open(RUNTIME_CACHE)
         const cached = await matchRsc(request)
+        const refresh = async () => {
+          if (!self.navigator.onLine) return
+          try {
+            const networkResponse = await fetchWithTimeout(request, 4000)
+            if (networkResponse.ok) {
+              await cacheRscResponse(cache, request, networkResponse)
+            }
+          } catch {
+            // Keep the saved copy.
+          }
+        }
+
+        if (cached) {
+          event.waitUntil(refresh())
+          return cached
+        }
+        if (!self.navigator.onLine) {
+          return new Response(null, {
+            status: 503,
+            statusText: "Offline",
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          })
+        }
 
         try {
-          const networkResponse = await fetch(request)
+          const networkResponse = await fetchWithTimeout(request, 4000)
           if (networkResponse.ok) {
             await cacheRscResponse(cache, request, networkResponse)
             return networkResponse
           }
-          if (cached) return cached
           return networkResponse
         } catch {
-          if (cached) return cached
           return new Response(null, {
             status: 503,
             statusText: "Offline",
@@ -161,50 +231,71 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
-  // Build assets — cache first (hashed filenames).
+  // Build assets — cache first (hashed filenames). Never hang if the file isn't cached.
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
-      caches.match(request).then(
-        (cached) =>
-          cached ||
-          fetch(request).then(async (networkResponse) => {
-            if (networkResponse && networkResponse.ok) {
-              const cache = await caches.open(STATIC_CACHE)
-              await cache.put(request, networkResponse.clone())
-            }
-            return networkResponse
-          })
-      )
+      (async () => {
+        const cached = await caches.match(request)
+        if (cached) return cached
+        if (!self.navigator.onLine) {
+          return new Response("", { status: 503, statusText: "Offline" })
+        }
+        try {
+          const networkResponse = await fetchWithTimeout(request, 8000)
+          if (networkResponse && networkResponse.ok) {
+            const cache = await caches.open(STATIC_CACHE)
+            await cache.put(request, networkResponse.clone())
+          }
+          return networkResponse
+        } catch {
+          return new Response("", { status: 503, statusText: "Offline" })
+        }
+      })()
     )
     return
   }
 
-  // Navigations — try cache when network fails or returns an error document.
+  // Pages — saved copy first so a dead "online" connection cannot freeze navigation.
   event.respondWith(
     (async () => {
       const cache = await caches.open(RUNTIME_CACHE)
       const isNavigate =
         request.mode === "navigate" ||
         request.headers.get("accept")?.includes("text/html")
+      const exact = await caches.match(request)
+
+      const refresh = async () => {
+        if (!self.navigator.onLine) return
+        try {
+          const networkResponse = await fetchWithTimeout(request, 4000)
+          if (networkResponse.ok) {
+            await cacheResponse(cache, request, networkResponse)
+          }
+        } catch {
+          // Keep the saved copy.
+        }
+      }
+
+      if (exact) {
+        event.waitUntil(refresh())
+        return exact
+      }
+
+      if (!self.navigator.onLine) {
+        if (isNavigate) return cachedAppShell(url.pathname)
+        return new Response("", { status: 503, statusText: "Offline" })
+      }
 
       try {
-        const networkResponse = await fetch(request)
+        const networkResponse = await fetchWithTimeout(request, 4000)
         if (networkResponse.ok) {
           await cacheResponse(cache, request, networkResponse)
           return networkResponse
         }
-        if (isNavigate) {
-          const exact = await caches.match(request)
-          if (exact) return exact
-          return cachedAppShell(url.pathname)
-        }
+        if (isNavigate) return cachedAppShell(url.pathname)
         return networkResponse
       } catch {
-        const exact = await caches.match(request)
-        if (exact) return exact
-        if (isNavigate) {
-          return cachedAppShell(url.pathname)
-        }
+        if (isNavigate) return cachedAppShell(url.pathname)
         return new Response("", { status: 503, statusText: "Offline" })
       }
     })()

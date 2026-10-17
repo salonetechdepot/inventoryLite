@@ -21,7 +21,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { ImageUpload } from "@/components/image-upload"
 import { useAuth } from "@/hooks/use-auth"
-import { getConflictCount } from "@/lib/offline-sync"
+import { getConflictCount, cacheData, getCachedData, sendOrQueueMutation, SESSION_CACHE_KEY, type SessionBackup } from "@/lib/offline-sync"
 
 export default function AccountPage() {
   const { user, logout, mutate, sessionExpiresAt } = useAuth()
@@ -63,16 +63,39 @@ export default function AccountPage() {
     setSaving(true)
     setSettingsError("")
     try {
-      const res = await fetch("/api/account/settings", {
+      const result = await sendOrQueueMutation({
+        url: "/api/account/settings",
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ themeColor, shopLogoUrl: shopLogoUrl || null }),
+        body: { themeColor, shopLogoUrl: shopLogoUrl || null },
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setSettingsError(data.error || "Failed to save settings")
+
+      if (result.queued) {
+        const nextUser = user
+          ? {
+              ...user,
+              theme_color: themeColor,
+              shop_logo_url: shopLogoUrl || null,
+            }
+          : null
+        if (nextUser) {
+          const sessionExpires = sessionExpiresAt ?? null
+          await mutate({ user: nextUser, sessionExpiresAt: sessionExpires }, false)
+          const cached = await getCachedData<SessionBackup>(SESSION_CACHE_KEY)
+          await cacheData(SESSION_CACHE_KEY, {
+            user: nextUser,
+            sessionExpiresAt: cached?.sessionExpiresAt ?? sessionExpires,
+          })
+        }
         return
       }
+
+      if (!result.response?.ok) {
+        const data = await result.response?.json().catch(() => null)
+        setSettingsError(data?.error || "Failed to save settings")
+        return
+      }
+      const data = await result.response.json()
       await mutate({ user: data.user, sessionExpiresAt: sessionExpiresAt ?? null }, false)
     } catch {
       setSettingsError("Could not save settings. Try again.")

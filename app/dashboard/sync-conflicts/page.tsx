@@ -13,6 +13,7 @@ import {
   dismissConflictAndReconcile,
   listConflicts,
   retrySyncConflict,
+  runDeltaSync,
   type SyncConflict,
 } from "@/lib/offline-sync"
 import {
@@ -62,6 +63,9 @@ export default function SyncConflictsPage() {
 
   const handleDismissAll = async () => {
     await clearConflicts()
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      await runDeltaSync()
+    }
     await refresh()
     toast({ title: "All conflicts cleared" })
     router.push("/dashboard")
@@ -107,12 +111,12 @@ export default function SyncConflictsPage() {
               stale edit — refresh Products and try again.
             </li>
             <li>
-              <strong>Try again</strong> re-sends the change when online (safe for day close and
-              payments). Sales may fail again if stock is still short.
+              <strong>Send my change</strong> re-sends what this device saved. Sales can fail
+              again if stock is still short — re-enter the sale on Sell in that case.
             </li>
             <li>
-              <strong>Dismiss</strong> clears the alert and refreshes products and receipts from
-              the server. Offline sales still work; this only runs when you are online.
+              <strong>Use server</strong> drops the rejected change and refreshes products and
+              receipts from the server. This only runs fully when you are online.
             </li>
           </ul>
         </CardContent>
@@ -166,7 +170,7 @@ export default function SyncConflictsPage() {
                           className="flex-1"
                           onClick={() => void handleRetry(conflict.id)}
                         >
-                          Try again
+                          Send my change
                         </Button>
                         <Button
                           variant="outline"
@@ -174,7 +178,7 @@ export default function SyncConflictsPage() {
                           className="flex-1"
                           onClick={() => void handleDismiss(conflict.id)}
                         >
-                          Dismiss
+                          Use server
                         </Button>
                       </div>
                     </CardContent>
