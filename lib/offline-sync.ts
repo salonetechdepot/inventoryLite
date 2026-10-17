@@ -1588,7 +1588,14 @@ export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   }
 
   const cached = await getCachedData<T>(cacheKey)
-  const deadline = cached !== null ? CACHED_FETCH_DEADLINE_MS : FETCH_DEADLINE_MS
+  const cachedSessionSignedOut =
+    cacheKey === SESSION_CACHE_KEY &&
+    cached !== null &&
+    !(cached as SessionBackup).user
+  const deadline =
+    cached !== null && !cachedSessionSignedOut
+      ? CACHED_FETCH_DEADLINE_MS
+      : FETCH_DEADLINE_MS
 
   try {
     const res = await fetchWithDeadline(url, { credentials: "same-origin" }, deadline)

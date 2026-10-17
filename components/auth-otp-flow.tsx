@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, Suspense } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Smartphone, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,6 @@ function safeRedirectPath(path: string | null): string {
 }
 
 function AuthOtpFlowInner() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const sendOtp = useAuthStore((s) => s.sendOtp)
   const confirmOtp = useAuthStore((s) => s.confirmOtp)
@@ -92,8 +91,7 @@ function AuthOtpFlowInner() {
         setError(result.error)
         return
       }
-      router.push(safeRedirectPath(searchParams.get("next")))
-      router.refresh()
+      window.location.assign(safeRedirectPath(searchParams.get("next")))
     } catch {
       setError("Something went wrong. Please try again.")
     } finally {

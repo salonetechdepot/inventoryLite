@@ -55,8 +55,23 @@ async function cachedAppShell(pathname) {
   return offlineHtml()
 }
 
+/** Login HTML followed from a redirect must not be stored as the dashboard. */
+function isUnsafeToCache(request, response) {
+  if (!response || !response.ok || response.redirected) return true
+  try {
+    const requestPath = new URL(request.url).pathname
+    const finalPath = new URL(response.url).pathname
+    const landedOnLogin = finalPath === "/login" || finalPath.startsWith("/login/")
+    if (landedOnLogin && requestPath !== finalPath) return true
+    if (requestPath.startsWith("/dashboard") && !finalPath.startsWith("/dashboard")) return true
+  } catch {
+    return true
+  }
+  return false
+}
+
 async function cacheResponse(cache, request, response) {
-  if (!response || !response.ok) return
+  if (isUnsafeToCache(request, response)) return
   try {
     await cache.put(request, response.clone())
     const url = new URL(request.url)
@@ -69,7 +84,7 @@ async function cacheResponse(cache, request, response) {
 }
 
 async function cacheRscResponse(cache, request, response) {
-  if (!response || !response.ok) return
+  if (isUnsafeToCache(request, response)) return
   try {
     const url = new URL(request.url)
     await cache.put(request, response.clone())
@@ -188,23 +203,9 @@ self.addEventListener("fetch", (event) => {
       (async () => {
         const cache = await caches.open(RUNTIME_CACHE)
         const cached = await matchRsc(request)
-        const refresh = async () => {
-          if (!self.navigator.onLine) return
-          try {
-            const networkResponse = await fetchWithTimeout(request, 4000)
-            if (networkResponse.ok) {
-              await cacheRscResponse(cache, request, networkResponse)
-            }
-          } catch {
-            // Keep the saved copy.
-          }
-        }
 
-        if (cached) {
-          event.waitUntil(refresh())
-          return cached
-        }
         if (!self.navigator.onLine) {
+          if (cached) return cached
           return new Response(null, {
             status: 503,
             statusText: "Offline",
@@ -214,12 +215,15 @@ self.addEventListener("fetch", (event) => {
 
         try {
           const networkResponse = await fetchWithTimeout(request, 4000)
-          if (networkResponse.ok) {
+          if (networkResponse.ok && !isUnsafeToCache(request, networkResponse)) {
             await cacheRscResponse(cache, request, networkResponse)
             return networkResponse
           }
+          if (isUnsafeToCache(request, networkResponse)) return networkResponse
+          if (cached) return cached
           return networkResponse
         } catch {
+          if (cached) return cached
           return new Response(null, {
             status: 503,
             statusText: "Offline",
@@ -255,7 +259,7 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
-  // Pages — saved copy first so a dead "online" connection cannot freeze navigation.
+  // Pages — live response while online so login is not replayed from an old cache.
   event.respondWith(
     (async () => {
       const cache = await caches.open(RUNTIME_CACHE)
@@ -264,37 +268,24 @@ self.addEventListener("fetch", (event) => {
         request.headers.get("accept")?.includes("text/html")
       const exact = await caches.match(request)
 
-      const refresh = async () => {
-        if (!self.navigator.onLine) return
-        try {
-          const networkResponse = await fetchWithTimeout(request, 4000)
-          if (networkResponse.ok) {
-            await cacheResponse(cache, request, networkResponse)
-          }
-        } catch {
-          // Keep the saved copy.
-        }
-      }
-
-      if (exact) {
-        event.waitUntil(refresh())
-        return exact
-      }
-
       if (!self.navigator.onLine) {
+        if (exact) return exact
         if (isNavigate) return cachedAppShell(url.pathname)
         return new Response("", { status: 503, statusText: "Offline" })
       }
 
       try {
         const networkResponse = await fetchWithTimeout(request, 4000)
-        if (networkResponse.ok) {
+        if (!isUnsafeToCache(request, networkResponse)) {
           await cacheResponse(cache, request, networkResponse)
           return networkResponse
         }
+        if (networkResponse.redirected || networkResponse.ok) return networkResponse
+        if (exact) return exact
         if (isNavigate) return cachedAppShell(url.pathname)
         return networkResponse
       } catch {
+        if (exact) return exact
         if (isNavigate) return cachedAppShell(url.pathname)
         return new Response("", { status: 503, statusText: "Offline" })
       }

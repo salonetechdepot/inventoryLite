@@ -1,7 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useRef, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useAuthStore } from "@/stores/auth-store"
 
@@ -45,7 +45,6 @@ function stripTokenFromUrl() {
 }
 
 function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const completePortalHandoff = useAuthStore((s) => s.completePortalHandoff)
   const startedRef = useRef(false)
@@ -69,7 +68,7 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
     void (async () => {
       try {
         const user = await completePortalHandoff(token)
-        router.replace("/dashboard")
+        window.location.assign("/dashboard")
         void user
       } catch (error) {
         const message =
@@ -81,7 +80,7 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
         onBusyChange(false)
       }
     })()
-  }, [searchParams, completePortalHandoff, router, onError, onBusyChange])
+  }, [searchParams, completePortalHandoff, onError, onBusyChange])
 
   if (!signingIn) return null
 
