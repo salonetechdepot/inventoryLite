@@ -150,9 +150,16 @@ self.addEventListener("activate", (event) => {
 function fetchWithTimeout(request, ms) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
-  return fetch(request, { signal: controller.signal }).finally(() =>
-    clearTimeout(timer)
-  )
+  // A navigation Request cannot be re-fetched with extra init; rebuild it so cookies are kept.
+  const next =
+    request.mode === "navigate"
+      ? fetch(request.url, {
+          credentials: "include",
+          redirect: "follow",
+          signal: controller.signal,
+        })
+      : fetch(request, { signal: controller.signal })
+  return next.finally(() => clearTimeout(timer))
 }
 
 function isImageRequest(request) {
@@ -191,6 +198,10 @@ self.addEventListener("fetch", (event) => {
 
   // API + mutations are handled in the app (IndexedDB) — never intercept.
   if (url.pathname.startsWith("/api/")) return
+
+  // Online document loads must hit the network with cookies. A cached login page
+  // was being served for /dashboard and bouncing people back to sign-in.
+  if (request.mode === "navigate" && self.navigator.onLine) return
 
   const isRsc =
     request.headers.get("rsc") === "1" ||

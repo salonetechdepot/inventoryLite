@@ -133,11 +133,11 @@ export function useAuth() {
     if (accountLocked) return false
     if (user) return false
     if (!isHydrated) return true
-    // Signed out — don't block on a network session check (especially offline).
-    if (!storeUser && !data?.user) return false
     if (isOffline) return false
-    return swrLoading
-  }, [user, isHydrated, storeUser, data?.user, isOffline, swrLoading])
+    // Don't send people to login until the session request has actually finished.
+    if (data === undefined || swrLoading) return true
+    return false
+  }, [user, isHydrated, data, isOffline, swrLoading, accountLocked])
 
   return {
     user,

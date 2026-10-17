@@ -205,7 +205,11 @@ export const useAuthStore = create<AuthState>()(
         pendingLoginIdentity: state.pendingLoginIdentity,
       }),
       onRehydrateStorage: () => (state) => {
-        const valid = state?.isSessionValid() ?? false
+        const expiresAt = state?.sessionExpiresAt
+        const valid =
+          Boolean(state?.user) &&
+          hasSessionExpiry(expiresAt) &&
+          !isSessionExpired(expiresAt)
         useAuthStore.setState({
           ...(valid
             ? {}
