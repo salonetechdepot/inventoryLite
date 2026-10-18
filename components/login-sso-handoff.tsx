@@ -4,44 +4,15 @@ import { Suspense, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useAuthStore } from "@/stores/auth-store"
+import {
+  pickPortalTokenFromSearch,
+  readPortalTokenFromLocation,
+  stripPortalTokenFromUrl,
+} from "@/lib/portal-token"
 
 type LoginSsoHandoffProps = {
   onError: (message: string) => void
   onBusyChange: (busy: boolean) => void
-}
-
-const PORTAL_TOKEN_QUERY_KEYS = [
-  "token",
-  "access_token",
-  "accessToken",
-  "access-token",
-] as const
-
-function pickPortalTokenFromSearch(params: URLSearchParams): string | null {
-  for (const key of PORTAL_TOKEN_QUERY_KEYS) {
-    const value = params.get(key)?.trim()
-    if (value) return value
-  }
-  return null
-}
-
-/** Some portals put the JWT in the hash (#access_token=…) instead of ?query=. */
-function pickPortalTokenFromHash(): string | null {
-  if (typeof window === "undefined") return null
-  const raw = window.location.hash.replace(/^#/, "").trim()
-  if (!raw) return null
-  const hashParams = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw)
-  return pickPortalTokenFromSearch(hashParams)
-}
-
-function stripTokenFromUrl() {
-  const url = new URL(window.location.href)
-  for (const key of PORTAL_TOKEN_QUERY_KEYS) {
-    url.searchParams.delete(key)
-  }
-  url.hash = ""
-  const next = `${url.pathname}${url.search}${url.hash}`
-  window.history.replaceState(window.history.state, "", next)
 }
 
 function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
@@ -51,8 +22,7 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
   const [signingIn, setSigningIn] = useState(false)
 
   useEffect(() => {
-    const token =
-      pickPortalTokenFromSearch(searchParams) ?? pickPortalTokenFromHash()
+    const token = pickPortalTokenFromSearch(searchParams) ?? readPortalTokenFromLocation()
     if (!token) {
       onBusyChange(false)
       return
@@ -60,7 +30,7 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
     if (startedRef.current) return
     startedRef.current = true
 
-    stripTokenFromUrl()
+    stripPortalTokenFromUrl()
     setSigningIn(true)
     onBusyChange(true)
     onError("")
