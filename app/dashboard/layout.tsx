@@ -23,7 +23,15 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { user, isLoading, sessionExpired, sessionExpiresAt, logout, accountLocked } = useAuth()
+  const {
+    user,
+    isLoading,
+    sessionExpired,
+    sessionExpiresAt,
+    logout,
+    accountLocked,
+    mutate: refreshSession,
+  } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const [isOffline, setIsOffline] = useState(false)
@@ -64,6 +72,8 @@ export default function DashboardLayout({
     void (async () => {
       try {
         await completePortalHandoff(token)
+        // The first session request ran before the cookie existed and cached "signed out".
+        await refreshSession()
       } catch (error) {
         setPortalError(
           error instanceof Error
@@ -75,7 +85,7 @@ export default function DashboardLayout({
         setPortalSigningIn(false)
       }
     })()
-  }, [completePortalHandoff])
+  }, [completePortalHandoff, refreshSession])
 
   useEffect(() => {
     if (portalTokenRef.current || handoffActiveRef.current || portalSigningIn || portalError) return

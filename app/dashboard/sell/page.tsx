@@ -20,6 +20,7 @@ import {
   Link2,
   Settings2,
   Radio,
+  BookUser,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -51,7 +52,14 @@ import {
 } from "@/components/ui/drawer"
 import { cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
-import { fetchWithOfflineCache, loadReturnableFromCache, sendOrQueueMutation } from "@/lib/offline-sync"
+import {
+  fetchWithOfflineCache,
+  loadReturnableFromCache,
+  SALE_RECEIPTS_CACHE_KEY,
+  sendOrQueueMutation,
+} from "@/lib/offline-sync"
+import { normalizePhoneKey, sumOutstanding, type DebtorReceiptSummary } from "@/lib/debtors"
+import { CollectDebtDrawer } from "@/components/collect-debt-drawer"
 import { useAuth } from "@/hooks/use-auth"
 import { ReceiptView, type ReceiptData } from "@/components/receipt-view"
 import {
@@ -101,7 +109,14 @@ interface Product {
   specifications?: ProductSpecifications | null
   quantity: number
   unit_price: number
+  low_stock_threshold?: number
   category_name: string | null
+}
+
+const DEFAULT_LOW_STOCK_THRESHOLD = 5
+
+function lowStockThreshold(product: Product) {
+  return Number(product.low_stock_threshold ?? DEFAULT_LOW_STOCK_THRESHOLD)
 }
 
 interface CartItem {
@@ -171,6 +186,8 @@ function SellPageContent() {
   const [isPartPayment, setIsPartPayment] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>("cash")
   const [showPosSettings, setShowPosSettings] = useState(false)
+  const [showCollectDebt, setShowCollectDebt] = useState(false)
+  const [collectDebtQuery, setCollectDebtQuery] = useState("")
   const [searchEditable, setSearchEditable] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const autoPrintedReceiptIdRef = useRef<string | null>(null)
@@ -181,7 +198,8 @@ function SellPageContent() {
     showReceipt ||
     showScanner ||
     showOversellConfirm ||
-    showPosSettings
+    showPosSettings ||
+    showCollectDebt
 
   const { data, isLoading, mutate } = useSWR<{ products: Product[] }>(
     "/api/products",
@@ -189,6 +207,26 @@ function SellPageContent() {
   )
 
   const products = data?.products || []
+
+  const { data: saleReceiptsData } = useSWR<{ receipts: DebtorReceiptSummary[] }>(
+    SALE_RECEIPTS_CACHE_KEY,
+    fetcher
+  )
+  const customerPhoneKey = normalizePhoneKey(customerPhone)
+  const customerOwes =
+    customerPhoneKey.length >= 8
+      ? sumOutstanding(
+          (saleReceiptsData?.receipts ?? []).filter(
+            (receipt) => normalizePhoneKey(receipt.customer_phone) === customerPhoneKey
+          )
+        )
+      : 0
+
+  const openCollectDebt = (query = "") => {
+    setShowCheckout(false)
+    setCollectDebtQuery(query)
+    setShowCollectDebt(true)
+  }
 
   useWakeLock(posSettings.keepScreenAwake && !scannerPaused)
 
@@ -273,9 +311,17 @@ function SellPageContent() {
     void loadReturnable()
   }, [searchParams, products])
 
-  const filteredProducts = products.filter((product) =>
-    product.name.toLowerCase().includes(search.toLowerCase())
+  const [showLowStockOnly, setShowLowStockOnly] = useState(false)
+  const lowStockProducts = products.filter(
+    (product) => product.quantity > 0 && product.quantity <= lowStockThreshold(product)
   )
+  const outOfStockProducts = products.filter((product) => product.quantity <= 0)
+
+  const filteredProducts = products.filter((product) => {
+    if (!product.name.toLowerCase().includes(search.toLowerCase())) return false
+    if (showLowStockOnly) return product.quantity <= lowStockThreshold(product)
+    return true
+  })
 
   const cartTotal = cart.reduce(
     (sum, item) => sum + item.quantity * item.product.unit_price,
@@ -472,21 +518,27 @@ function SellPageContent() {
           : {}),
       }
 
-      const { queued, response, conflict } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: "/api/sales/batch",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
       })
-
-      if (conflict) {
-        setError("Checkout conflict detected. Please refresh products and try again.")
-        return
-      }
+      const { queued, response } = result
+      const serverError = "serverError" in result ? result.serverError : undefined
 
       if (!queued && !response?.ok) {
-        const data = await response?.json()
-        setError(data?.error || "Failed to record sales")
+        const data = await response?.json().catch(() => null)
+        const reason =
+          typeof data?.error === "string" && data.error
+            ? data.error
+            : `Checkout failed (${response?.status ?? "no response"}).`
+        setError(
+          "conflict" in result && result.conflict
+            ? `${reason} Check stock on Products, then try again.`
+            : reason
+        )
+        void mutate()
         return
       }
 
@@ -575,6 +627,24 @@ function SellPageContent() {
         }
       }
 
+      if (transactionType === "sale") {
+        const runningLow = cart
+          .map((item) => ({
+            name: item.product.name,
+            left: item.product.quantity - item.quantity,
+            threshold: lowStockThreshold(item.product),
+          }))
+          .filter((row) => row.left <= row.threshold)
+        if (runningLow.length > 0) {
+          toast({
+            title: runningLow.some((row) => row.left <= 0) ? "Out of stock" : "Running low",
+            description: runningLow
+              .map((row) => `${row.name}: ${Math.max(0, row.left)} left`)
+              .join(" · "),
+          })
+        }
+      }
+
       setLastReceipt(receipt)
       setLastReceiptOffline(Boolean(queued))
       setShowCheckout(false)
@@ -582,7 +652,13 @@ function SellPageContent() {
       clearCart()
       void mutate(undefined, { revalidate: navigator.onLine })
 
-      if (queued) {
+      if (queued && serverError) {
+        toast({
+          title: "Sale saved — server did not accept it yet",
+          description: `${serverError} It will retry; if it keeps failing, open Sync conflicts.`,
+          variant: "destructive",
+        })
+      } else if (queued) {
         toast({
           title: "Checkout saved offline",
           description: "This transaction will sync automatically when online.",
@@ -673,6 +749,16 @@ function SellPageContent() {
               {isReturn ? "Process Return" : "Make a Sale"}
             </h1>
             <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-11"
+                onClick={() => openCollectDebt()}
+                aria-label="Collect a debt"
+                title="Collect a debt"
+              >
+                <BookUser className="size-5" />
+              </Button>
               <Button
                 variant="outline"
                 size="icon"
@@ -794,6 +880,27 @@ function SellPageContent() {
           </div>
         )}
 
+        {!isReturn && (lowStockProducts.length > 0 || outOfStockProducts.length > 0) && (
+          <button
+            type="button"
+            onClick={() => setShowLowStockOnly((value) => !value)}
+            className="mb-3 flex w-full items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-left text-sm text-warning-foreground"
+          >
+            <AlertTriangle className="size-4 shrink-0 text-warning" />
+            <span className="flex-1">
+              {[
+                lowStockProducts.length > 0 && `${lowStockProducts.length} low`,
+                outOfStockProducts.length > 0 && `${outOfStockProducts.length} out of stock`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+            <span className="text-xs font-medium underline">
+              {showLowStockOnly ? "Show all" : "Show these"}
+            </span>
+          </button>
+        )}
+
         {/* Products List */}
         {isLoading ? (
           <div className="flex flex-col gap-3">
@@ -823,6 +930,7 @@ function SellPageContent() {
               const remaining = getRemainingStock(product)
               const inCart = cart.find((item) => item.product.id === product.id)
               const outOfStock = remaining <= 0
+              const lowStock = !outOfStock && remaining <= lowStockThreshold(product)
 
               return (
                 <Card
@@ -856,6 +964,19 @@ function SellPageContent() {
                           >
                             {remaining} in stock
                           </span>
+                          {!isReturn && outOfStock && (
+                            <Badge variant="destructive" className="h-5 text-[10px]">
+                              Out of stock
+                            </Badge>
+                          )}
+                          {!isReturn && lowStock && (
+                            <Badge
+                              variant="outline"
+                              className="h-5 border-warning/50 bg-warning/10 text-[10px] text-warning-foreground"
+                            >
+                              Low stock
+                            </Badge>
+                          )}
                           {inCart && (
                             <Badge variant="default" className="bg-primary h-5 text-[10px]">
                               {inCart.quantity} in cart
@@ -1063,6 +1184,23 @@ function SellPageContent() {
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     className="h-11"
                   />
+                  {!isReturn && customerOwes > 0 && (
+                    <div className="flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+                      <span>
+                        This customer already owes{" "}
+                        <strong>{formatPrice(customerOwes)}</strong>.
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 shrink-0"
+                        onClick={() => openCollectDebt(customerPhone.trim())}
+                      >
+                        Collect
+                      </Button>
+                    </div>
+                  )}
                   {isPartPayment && (
                     <p className="text-xs text-muted-foreground">
                       Name or phone is required so this balance appears in your credit book.
@@ -1267,6 +1405,12 @@ function SellPageContent() {
         open={showScanner}
         onClose={() => setShowScanner(false)}
         onScan={handleScanInput}
+      />
+
+      <CollectDebtDrawer
+        open={showCollectDebt}
+        onOpenChange={setShowCollectDebt}
+        initialQuery={collectDebtQuery}
       />
 
       <Drawer open={showPosSettings} onOpenChange={setShowPosSettings}>

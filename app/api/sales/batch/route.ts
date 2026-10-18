@@ -22,6 +22,7 @@ import {
 import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
 import { parseSpecifications, saleLineProductName } from '@/lib/product-specifications'
 import { resolveCheckoutPayment } from '@/lib/checkout-payment'
+import { describeDbError } from '@/lib/db-error'
 import { z } from 'zod'
 
 interface SaleItem {
@@ -342,6 +343,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 409 })
     }
     console.error('Batch sale error:', error)
-    return NextResponse.json({ error: 'Failed to process sales' }, { status: 500 })
+    return NextResponse.json(
+      { error: describeDbError(error, 'Could not save this sale') },
+      { status: 500 }
+    )
   }
 }

@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import { moneySchema, parseJsonBody, validateRouteId } from '@/lib/api-validation'
+import { describeDbError } from '@/lib/db-error'
 import { z } from 'zod'
 
 const paymentCreateSchema = z.object({
   amount: moneySchema.refine((amount) => amount > 0, 'Amount must be greater than zero'),
-  method: z.string().trim().min(1).max(50).optional().default('cash'),
-  note: z.string().trim().max(255).optional(),
+  method: z.string().trim().min(1).max(32).optional().default('cash'),
+  // The collect form sends null when the note box is empty.
+  note: z.string().trim().max(255).nullish(),
 })
 
 // POST record an extra payment toward a part-payment receipt.
@@ -181,6 +183,9 @@ export async function POST(
     })
   } catch (error) {
     console.error('Add payment error:', error)
-    return NextResponse.json({ error: 'Failed to record payment' }, { status: 500 })
+    return NextResponse.json(
+      { error: describeDbError(error, 'Could not record this payment') },
+      { status: 500 }
+    )
   }
 }

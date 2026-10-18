@@ -1238,9 +1238,72 @@ export async function dismissConflict(id: string) {
   await deleteFromStore(CONFLICT_STORE, id)
 }
 
+/**
+ * Undo what applyOptimisticProductMutation put in the device cache for a change the
+ * server will never apply — otherwise History shows a sale that does not exist and
+ * stock stays lowered.
+ */
+async function rollbackOptimisticMutation(input: {
+  url: string
+  method: string
+  body?: unknown
+}) {
+  if (!isBrowser()) return
+  const payload =
+    input.body && typeof input.body === "object"
+      ? (input.body as Record<string, unknown>)
+      : {}
+
+  if (input.url === "/api/sales/batch" && input.method === "POST") {
+    const items = Array.isArray(payload.items) ? (payload.items as BatchCartItem[]) : []
+    const type = payload.type === "return" ? "return" : "sale"
+    await withProductsCache((products) =>
+      products.map((product) => {
+        const item = items.find((entry) => entry.productId === product.id)
+        if (!item) return product
+        const qty = Number(item.quantity ?? 0)
+        const applied =
+          type === "return"
+            ? restockQuantityForLine(qty, item.returnDisposition as ReturnDisposition | undefined)
+            : -qty
+        return { ...product, quantity: Number(product.quantity ?? 0) - applied }
+      })
+    )
+    const receiptId = payload._offlineReceiptId ? String(payload._offlineReceiptId) : null
+    if (receiptId) {
+      const cacheKey = type === "return" ? RETURN_RECEIPTS_CACHE_KEY : SALE_RECEIPTS_CACHE_KEY
+      await withReceiptsCache(cacheKey, (receipts) =>
+        receipts.filter((receipt) => receipt.id !== receiptId)
+      )
+      await mutate(cacheKey, await getCachedData(cacheKey), { revalidate: false })
+    }
+    await mutate(PRODUCTS_CACHE_KEY, await getCachedData(PRODUCTS_CACHE_KEY), {
+      revalidate: false,
+    })
+    return
+  }
+
+  if (parseReceiptPaymentUrl(input.url) && input.method === "POST" && navigator.onLine) {
+    try {
+      const fresh = await fetchWithOfflineCache(SALE_RECEIPTS_CACHE_KEY)
+      await mutate(SALE_RECEIPTS_CACHE_KEY, fresh, { revalidate: false })
+    } catch {
+      // Keep the cache; the next sync replaces it.
+    }
+  }
+}
+
 /** Dismiss and pull server truth into offline cache (online only). */
 export async function dismissConflictAndReconcile(id: string) {
+  const conflict = (await listConflicts()).find((row) => row.id === id)
   await dismissConflict(id)
+  if (conflict) {
+    await rollbackOptimisticMutation({
+      url: conflict.url,
+      method: conflict.method,
+      body: conflict.payload,
+    })
+  }
   if (isBrowser() && navigator.onLine) {
     await runDeltaSync()
   }
@@ -1680,6 +1743,14 @@ export async function sendOrQueueMutation(input: {
         await enqueueMutation({ ...input, tempId: optimistic.tempId })
         return { queued: true as const, response: null }
       }
+      // Server fault, not the cashier's input: keep the sale and retry it rather than
+      // dropping it. After repeated failures it lands on the Sync conflicts page.
+      if (response.status >= 500) {
+        const serverError = await readApiError(response)
+        await enqueueMutation({ ...input, tempId: optimistic.tempId })
+        return { queued: true as const, response: null, serverError }
+      }
+      await rollbackOptimisticMutation(input)
       if (isConflictStatus(response.status)) {
         return { queued: false as const, response, conflict: true as const }
       }
