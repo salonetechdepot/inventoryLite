@@ -103,85 +103,82 @@ async function svgElementToImage(svg: SVGElement): Promise<HTMLImageElement | nu
   }
 }
 
-async function loadGraphicFromRoot(
-  root: ParentNode,
-  mode: 'barcode' | 'qr'
-): Promise<HTMLImageElement | null> {
-  if (mode === 'barcode') {
-    const barcodeImg = root.querySelector<HTMLImageElement>('.product-label-barcode-img')
-    if (barcodeImg?.src) {
-      try {
-        return await loadImage(barcodeImg.src)
-      } catch {
-        return null
-      }
-    }
-  }
-  const svg = root.querySelector('.product-label-code-graphic svg')
-  if (svg instanceof SVGElement) return svgElementToImage(svg)
-  return null
+async function loadBarcodeImage(root: ParentNode): Promise<HTMLImageElement | null> {
+  const svg = root.querySelector('.product-label-barcode-svg[data-ready]')
+  return svg instanceof SVGElement ? svgElementToImage(svg) : null
 }
 
+async function loadQrImage(root: ParentNode): Promise<HTMLImageElement | null> {
+  const svg = root.querySelector('.product-label-qr svg')
+  return svg instanceof SVGElement ? svgElementToImage(svg) : null
+}
+
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let end = text.length
+  while (end > 1 && ctx.measureText(`${text.slice(0, end)}…`).width > maxWidth) end -= 1
+  return `${text.slice(0, end)}…`
+}
+
+/** Same layout as the preview: title (+ price), QR beside barcode, code number underneath. */
 export async function downloadLabelPreviewPng(
   container: HTMLElement,
-  filename: string,
-  mode: 'barcode' | 'qr' = 'barcode'
+  filename: string
 ): Promise<boolean> {
   const root = container.querySelector('.product-label-print-root') ?? container
-  const name = readLabelField(root, '.product-label-name', 'Product')
+  const title = readLabelField(root, '.product-label-name', 'Product')
   const price = readLabelField(root, '.product-label-price')
-  const category = readLabelField(root, '.product-label-category', 'Uncategorized')
   const code = readLabelField(root, '.product-label-code')
+  const [qr, barcode] = await Promise.all([loadQrImage(root), loadBarcodeImage(root)])
+  if (!qr && !barcode) return false
 
   const scale = 2
-  const width = 320
+  const width = 480
   const padding = 16
-  const lineHeight = 20
-  let graphicHeight = 0
-  const graphicEl = await loadGraphicFromRoot(root, mode)
-  if (graphicEl) {
-    graphicHeight = Math.min(mode === 'qr' ? 100 : 72, Math.max(48, graphicEl.height))
-  }
-
-  const totalHeight =
-    padding * 2 + lineHeight * 3 + (graphicEl ? graphicHeight + 10 : 0) + lineHeight + 4
+  const gap = 12
+  const codeSize = 120
+  const titleHeight = 30
+  const codeTextHeight = 34
+  const height = padding * 2 + titleHeight + gap + codeSize + gap + codeTextHeight
 
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
   if (!ctx) return false
 
   canvas.width = width * scale
-  canvas.height = totalHeight * scale
+  canvas.height = height * scale
   ctx.scale(scale, scale)
+  ctx.imageSmoothingEnabled = false
   ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, width, totalHeight)
-
+  ctx.fillRect(0, 0, width, height)
   ctx.fillStyle = '#000000'
-  ctx.textAlign = 'center'
 
-  let y = padding + 14
-  ctx.font = 'bold 14px system-ui, sans-serif'
-  ctx.fillText(name.slice(0, 48), width / 2, y)
-  y += lineHeight
-
-  ctx.font = 'bold 13px system-ui, sans-serif'
-  ctx.fillText(price, width / 2, y)
-  y += lineHeight
-
-  ctx.font = '12px system-ui, sans-serif'
-  ctx.fillText(category.slice(0, 40), width / 2, y)
-  y += lineHeight
-
-  if (graphicEl) {
-    const drawWidth = mode === 'qr' ? graphicHeight : width - padding * 2
-    const drawHeight = graphicHeight
-    const x = mode === 'qr' ? (width - drawWidth) / 2 : padding
-    ctx.drawImage(graphicEl, x, y + 4, drawWidth, drawHeight)
-    y += drawHeight + 12
+  let y = padding
+  ctx.font = 'bold 22px system-ui, sans-serif'
+  ctx.textBaseline = 'top'
+  let titleWidth = width - padding * 2
+  if (price) {
+    ctx.textAlign = 'right'
+    ctx.fillText(price, width - padding, y)
+    titleWidth -= ctx.measureText(price).width + gap
   }
+  ctx.textAlign = 'left'
+  ctx.fillText(fitText(ctx, title, titleWidth), padding, y)
+  y += titleHeight + gap
 
-  ctx.font = '11px ui-monospace, monospace'
-  ctx.fillText(code.slice(0, 44), width / 2, y + 10)
+  let x = padding
+  if (qr) {
+    ctx.drawImage(qr, x, y, codeSize, codeSize)
+    x += codeSize + gap
+  }
+  if (barcode) {
+    ctx.drawImage(barcode, x, y, width - padding - x, codeSize)
+  }
+  y += codeSize + gap
+
+  ctx.font = '500 26px system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText(fitText(ctx, code, width - padding * 2), width / 2, y)
 
   const link = document.createElement('a')
   link.href = canvas.toDataURL('image/png')
@@ -190,20 +187,11 @@ export async function downloadLabelPreviewPng(
   return true
 }
 
-export function isLabelGraphicReady(
-  container: HTMLElement | null,
-  mode: 'barcode' | 'qr' = 'barcode'
-): boolean {
+export function isLabelGraphicReady(container: HTMLElement | null): boolean {
   if (!container) return false
   const root = container.querySelector('.product-label-print-root')
   if (!root) return false
-  if (mode === 'barcode') {
-    const img = root.querySelector<HTMLImageElement>('.product-label-barcode-img')
-    return Boolean(img?.src)
-  }
-  return Boolean(root.querySelector('.product-label-code-graphic svg'))
-}
-
-export function isLabelBarcodeReady(container: HTMLElement | null): boolean {
-  return isLabelGraphicReady(container, 'barcode')
+  const barcodeReady = root.querySelector('.product-label-barcode-svg[data-ready]')
+  const qrSettled = root.querySelector('.product-label-qr svg, .product-label-qr-error')
+  return Boolean(barcodeReady) && Boolean(qrSettled)
 }

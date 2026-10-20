@@ -5,6 +5,8 @@ import dynamic from "next/dynamic"
 import { Download, Printer, ScanLine, Sparkles } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { useLabelShowPrice } from "@/hooks/use-label-show-price"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { toast } from "@/hooks/use-toast"
 import { SellBarcodeScannerDialog } from "@/components/sell-barcode-scanner-dialog"
@@ -17,7 +19,6 @@ import {
   generateScanCode,
   isValidScanCode,
   scanCodeValidationError,
-  type ScanCodeDisplayMode,
 } from "@/lib/scan-code"
 import { cn } from "@/lib/utils"
 
@@ -52,8 +53,8 @@ export function ScanCodeField({
   id = "scanCode",
 }: Props) {
   const previewRef = useRef<HTMLDivElement>(null)
-  const [displayMode, setDisplayMode] = useState<ScanCodeDisplayMode>("barcode")
   const [scannerOpen, setScannerOpen] = useState(false)
+  const { showPrice, setShowPrice } = useLabelShowPrice()
   const [printing, setPrinting] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
@@ -95,7 +96,7 @@ export function ScanCodeField({
 
   const handlePrint = () => {
     if (!showPreview || !previewRef.current) return
-    if (!isLabelGraphicReady(previewRef.current, displayMode)) {
+    if (!isLabelGraphicReady(previewRef.current)) {
       toast({
         title: "Label still loading",
         description: "Wait for the barcode or QR code to appear, then try again.",
@@ -127,8 +128,7 @@ export function ScanCodeField({
         .slice(0, 40)
       const ok = await downloadLabelPreviewPng(
         previewRef.current,
-        `${safeName || "product"}-label.png`,
-        displayMode
+        `${safeName || "product"}-label.png`
       )
       if (!ok) {
         toast({
@@ -196,34 +196,21 @@ export function ScanCodeField({
 
       {showPreview && (
         <div className="mt-3 space-y-3">
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={displayMode === "barcode" ? "default" : "outline"}
-              className="flex-1"
-              onClick={() => setDisplayMode("barcode")}
-            >
-              Barcode
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={displayMode === "qr" ? "default" : "outline"}
-              className="flex-1"
-              onClick={() => setDisplayMode("qr")}
-            >
-              QR code
-            </Button>
-          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={showPrice}
+              onCheckedChange={(checked) => setShowPrice(checked === true)}
+            />
+            Show price on label
+          </label>
 
           <div ref={previewRef} className={cn(printing && "print:block")}>
             <ProductLabelPreview
               scanCode={trimmed}
-              mode={displayMode}
               productName={productName}
-              unitPrice={unitPrice}
               categoryName={categoryName}
+              unitPrice={unitPrice}
+              showPrice={showPrice}
             />
           </div>
 

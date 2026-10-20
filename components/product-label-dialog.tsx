@@ -4,6 +4,8 @@ import { useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { Download, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { useLabelShowPrice } from "@/hooks/use-label-show-price"
 import {
   Dialog,
   DialogContent,
@@ -16,7 +18,6 @@ import {
   isLabelGraphicReady,
 } from "@/lib/product-label-print"
 import { printLabelWithHint } from "@/lib/thermal-print-actions"
-import type { ScanCodeDisplayMode } from "@/lib/scan-code"
 
 const ProductLabelPreview = dynamic(
   () =>
@@ -44,8 +45,8 @@ type Props = {
 
 export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
   const previewRef = useRef<HTMLDivElement>(null)
-  const [displayMode, setDisplayMode] = useState<ScanCodeDisplayMode>("barcode")
   const [printing, setPrinting] = useState(false)
+  const { showPrice, setShowPrice } = useLabelShowPrice()
   const [downloading, setDownloading] = useState(false)
 
   if (!product?.scan_code?.trim()) return null
@@ -54,7 +55,7 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
 
   const handlePrint = () => {
     if (!previewRef.current) return
-    if (!isLabelGraphicReady(previewRef.current, displayMode)) {
+    if (!isLabelGraphicReady(previewRef.current)) {
       toast({
         title: "Label still loading",
         description: "Wait for the barcode or QR code to appear, then try again.",
@@ -80,11 +81,7 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
         .replace(/[^a-z0-9]+/gi, "-")
         .replace(/^-|-$/g, "")
         .slice(0, 40)
-      await downloadLabelPreviewPng(
-        previewRef.current,
-        `${safeName || "product"}-label.png`,
-        displayMode
-      )
+      await downloadLabelPreviewPng(previewRef.current, `${safeName || "product"}-label.png`)
     } catch {
       toast({ title: "Could not save image", variant: "destructive" })
     } finally {
@@ -100,34 +97,21 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
         </DialogHeader>
         <p className="text-sm text-muted-foreground -mt-2">{product.name}</p>
 
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={displayMode === "barcode" ? "default" : "outline"}
-            className="flex-1"
-            onClick={() => setDisplayMode("barcode")}
-          >
-            Barcode
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={displayMode === "qr" ? "default" : "outline"}
-            className="flex-1"
-            onClick={() => setDisplayMode("qr")}
-          >
-            QR code
-          </Button>
-        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={showPrice}
+            onCheckedChange={(checked) => setShowPrice(checked === true)}
+          />
+          Show price on label
+        </label>
 
         <div ref={previewRef}>
           <ProductLabelPreview
             scanCode={scanCode}
-            mode={displayMode}
             productName={product.name}
-            unitPrice={product.unit_price}
             categoryName={product.category_name ?? undefined}
+            unitPrice={product.unit_price}
+            showPrice={showPrice}
           />
         </div>
 

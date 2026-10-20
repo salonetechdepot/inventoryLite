@@ -61,7 +61,7 @@ Mark: Pass | Fail | Skip | N/A
 
 | # | Test | Steps | Expected | Result |
 |---|------|-------|----------|--------|
-| C1 | Generate scan code | Add/Edit product → Generate | Code appears (e.g. SE-…) | |
+| C1 | Generate scan code | Add/Edit product → Generate | 13-digit number appears (e.g. 20…) | |
 | C2 | Label preview | Toggle Barcode / QR | Preview shows name, price, code image | |
 | C3 | Print label | Print label (wait for barcode to load) | 58mm label only — no dialog chrome | |
 | C4 | Save label PNG | Save image | PNG downloads with barcode + text | |

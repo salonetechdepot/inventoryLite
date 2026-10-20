@@ -415,7 +415,7 @@
   body.printing-product-label #product-label-print-portal .product-label-print-root {
     display: flex !important;
     flex-direction: column !important;
-    align-items: center !important;
+    align-items: stretch !important;
     width: 100% !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
@@ -437,54 +437,77 @@
     border-radius: 0 !important;
   }
 
+  /* Layout: "Category · Name" (+ price) / QR beside barcode / code number */
+  body.printing-product-label #product-label-print-portal .product-label-header {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 1.5mm !important;
+    width: 100% !important;
+  }
+
   body.printing-product-label #product-label-print-portal .product-label-name {
     display: block !important;
-    width: 100% !important;
-    font-size: 11px;
+    min-width: 0 !important;
+    font-size: 12px;
     font-weight: 700;
-    line-height: 1.2;
-    text-align: center;
+    line-height: 1.15;
+    text-align: left;
     color: #000 !important;
   }
 
   body.printing-product-label #product-label-print-portal .product-label-price {
     display: block !important;
-    width: 100% !important;
-    font-size: 11px;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    font-size: 12px;
     font-weight: 700;
-    text-align: center;
+    line-height: 1.15;
     color: #000 !important;
   }
 
-  body.printing-product-label #product-label-print-portal .product-label-category {
-    display: block !important;
-    width: 100% !important;
-    font-size: 9px;
-    text-align: center;
-    color: #000 !important;
-  }
-
-  body.printing-product-label #product-label-print-portal .product-label-code-graphic {
+  body.printing-product-label #product-label-print-portal .product-label-code-row {
     display: flex !important;
-    justify-content: center !important;
+    align-items: stretch !important;
+    gap: 1.5mm !important;
     width: 100% !important;
-    margin: 2px 0 !important;
+    height: 15mm !important;
+    margin: 0 !important;
   }
 
-  body.printing-product-label #product-label-print-portal .product-label-barcode-img,
-  body.printing-product-label #product-label-print-portal .product-label-code-graphic svg {
+  body.printing-product-label #product-label-print-portal .product-label-qr {
+    flex: 0 0 auto !important;
+    width: 15mm !important;
+    height: 15mm !important;
+  }
+
+  body.printing-product-label #product-label-print-portal .product-label-qr svg {
     display: block !important;
-    max-width: 100% !important;
-    width: auto !important;
-    height: auto !important;
-    margin: 0 auto !important;
+    width: 15mm !important;
+    height: 15mm !important;
+  }
+
+  body.printing-product-label #product-label-print-portal .product-label-barcode {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    height: 15mm !important;
+  }
+
+  body.printing-product-label #product-label-print-portal .product-label-barcode-svg {
+    display: block !important;
+    width: 100% !important;
+    height: 15mm !important;
+    margin: 0 !important;
   }
 
   body.printing-product-label #product-label-print-portal .product-label-code {
     display: block !important;
     width: 100% !important;
-    font-size: 8px;
-    font-family: ui-monospace, "Courier New", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    line-height: 1.1;
     text-align: center;
     word-break: break-all;
     color: #000 !important;

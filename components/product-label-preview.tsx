@@ -3,13 +3,10 @@
 import { useEffect, useState, type ComponentType } from "react"
 import { BarcodeSvg } from "@/components/barcode-svg"
 import { cn } from "@/lib/utils"
-import {
-  formatLabelPrice,
-  isValidScanCode,
-  type ScanCodeDisplayMode,
-} from "@/lib/scan-code"
+import { formatLabelPrice, isValidScanCode } from "@/lib/scan-code"
 
-const THERMAL_LABEL_BARCODE_WIDTH = 200
+/** On-screen height of both codes; print CSS sets 15mm. */
+const LABEL_CODE_SIZE = 96
 
 type QrProps = {
   value: string
@@ -20,19 +17,26 @@ type QrProps = {
 
 type Props = {
   scanCode: string
-  mode: ScanCodeDisplayMode
   productName?: string
-  unitPrice?: number | string
   categoryName?: string
+  unitPrice?: number | string
+  showPrice?: boolean
   className?: string
 }
 
+export function labelTitle(productName?: string, categoryName?: string): string {
+  const name = productName?.trim() || "Product"
+  const category = categoryName?.trim()
+  return category ? `${category} · ${name}` : name
+}
+
+/** Product sticker: "Category · Name" (+ price), QR beside barcode, code number underneath. */
 export function ProductLabelPreview({
   scanCode,
-  mode,
   productName,
-  unitPrice,
   categoryName,
+  unitPrice,
+  showPrice = false,
   className,
 }: Props) {
   const [QrCode, setQrCode] = useState<ComponentType<QrProps> | null>(null)
@@ -41,15 +45,10 @@ export function ProductLabelPreview({
   const valid = isValidScanCode(trimmed)
 
   useEffect(() => {
-    if (!valid || mode !== "qr") {
-      setQrCode(null)
-      setLoadError(false)
-      return
-    }
+    if (!valid) return
 
     let cancelled = false
     setLoadError(false)
-    setQrCode(null)
 
     async function load() {
       try {
@@ -64,45 +63,51 @@ export function ProductLabelPreview({
     return () => {
       cancelled = true
     }
-  }, [mode, trimmed, valid])
+  }, [valid])
 
   if (!valid) return null
-
-  const nameLine = productName?.trim() || "Product"
-  const priceLine = `NLe ${formatLabelPrice(unitPrice)}`
-  const categoryLine = categoryName?.trim() || "Uncategorized"
 
   return (
     <div
       className={cn(
-        "product-label-print-root flex flex-col items-center gap-1.5 text-center rounded-lg border bg-white p-4",
+        "product-label-print-root flex flex-col gap-2 rounded-lg border bg-white p-3 text-black",
         className
       )}
     >
-      <p className="product-label-name font-semibold text-sm leading-tight line-clamp-2 w-full">
-        {nameLine}
-      </p>
-      <p className="product-label-price text-sm font-bold text-primary w-full">{priceLine}</p>
-      <p className="product-label-category text-xs text-muted-foreground w-full">
-        {categoryLine}
-      </p>
-
-      <div className="flex justify-center w-full min-h-[56px] product-label-code-graphic">
-        {mode === "barcode" && (
-          <BarcodeSvg value={trimmed} maxWidth={THERMAL_LABEL_BARCODE_WIDTH} />
-        )}
-        {mode === "qr" && loadError && (
-          <p className="text-xs text-destructive">Could not load label preview.</p>
-        )}
-        {mode === "qr" && !loadError && !QrCode && (
-          <p className="text-xs text-muted-foreground">Loading preview…</p>
-        )}
-        {mode === "qr" && !loadError && QrCode && (
-          <QrCode value={trimmed} size={100} level="M" marginSize={1} />
+      <div className="product-label-header flex items-start justify-between gap-3">
+        <p className="product-label-name min-w-0 text-base font-bold leading-tight line-clamp-2">
+          {labelTitle(productName, categoryName)}
+        </p>
+        {showPrice && (
+          <p className="product-label-price shrink-0 whitespace-nowrap text-base font-bold leading-tight">
+            NLe {formatLabelPrice(unitPrice)}
+          </p>
         )}
       </div>
 
-      <p className="product-label-code text-[10px] font-mono tracking-wide break-all w-full">
+      <div
+        className="product-label-code-row flex items-stretch gap-2"
+        style={{ height: LABEL_CODE_SIZE }}
+      >
+        <div
+          className="product-label-qr flex shrink-0 items-center justify-center"
+          style={{ width: LABEL_CODE_SIZE, height: LABEL_CODE_SIZE }}
+        >
+          {QrCode && (
+            <QrCode value={trimmed} size={LABEL_CODE_SIZE} level="M" marginSize={0} />
+          )}
+          {!QrCode && loadError && (
+            <p className="product-label-qr-error text-[10px] text-destructive text-center print:hidden">
+              QR unavailable
+            </p>
+          )}
+        </div>
+        <div className="product-label-barcode min-w-0 flex-1">
+          <BarcodeSvg value={trimmed} className="size-full" />
+        </div>
+      </div>
+
+      <p className="product-label-code text-center text-xl font-medium tracking-wider break-all leading-tight">
         {trimmed}
       </p>
     </div>
