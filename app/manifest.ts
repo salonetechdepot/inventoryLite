@@ -20,6 +20,15 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: APP_BACKGROUND_COLOR,
     theme_color: APP_THEME_COLOR,
     orientation: "portrait",
+    shortcuts: [
+      {
+        name: "Sell",
+        short_name: "Sell",
+        description: "Open the Sell screen",
+        url: "/dashboard/sell",
+        icons: [{ src: APP_LOGO_SRC, sizes: "512x512", type: "image/jpeg" }],
+      },
+    ],
     icons: [
       {
         src: APP_LOGO_SRC,

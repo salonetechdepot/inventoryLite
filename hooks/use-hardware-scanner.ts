@@ -1,23 +1,34 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { attachHardwareScanner } from '@/lib/hardware-scanner'
+import {
+  attachHardwareScanner,
+  type ScanDiagnostics,
+  type ScanSource,
+} from '@/lib/hardware-scanner'
 
 type Options = {
   enabled: boolean
   paused?: boolean
   allowedInputRef?: React.RefObject<HTMLInputElement | null>
-  onScan: (code: string) => void
+  maxKeyGapMs?: number
+  /** Return false to leave the keystrokes to the focused field. */
+  onScan: (code: string, source: ScanSource) => boolean | void
+  onDiagnostics?: (info: ScanDiagnostics) => void
 }
 
 export function useHardwareScanner({
   enabled,
   paused = false,
   allowedInputRef,
+  maxKeyGapMs,
   onScan,
+  onDiagnostics,
 }: Options) {
   const onScanRef = useRef(onScan)
   onScanRef.current = onScan
+  const onDiagnosticsRef = useRef(onDiagnostics)
+  onDiagnosticsRef.current = onDiagnostics
 
   useEffect(() => {
     if (!enabled) return
@@ -25,7 +36,9 @@ export function useHardwareScanner({
       enabled: true,
       paused,
       allowedInputRef,
-      onScan: (code) => onScanRef.current(code),
+      maxKeyGapMs,
+      onScan: (code, source) => onScanRef.current(code, source),
+      onDiagnostics: (info) => onDiagnosticsRef.current?.(info),
     })
-  }, [enabled, paused, allowedInputRef])
+  }, [enabled, paused, allowedInputRef, maxKeyGapMs])
 }

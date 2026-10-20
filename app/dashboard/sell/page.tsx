@@ -21,10 +21,11 @@ import {
   Settings2,
   Radio,
   BookUser,
+  LayoutGrid,
+  ArrowDown,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -84,6 +85,8 @@ import { playScanBeep } from "@/lib/scan-feedback"
 import { resolveCheckoutPayment, shouldUsePartPayment } from "@/lib/checkout-payment"
 import { usePosSettings } from "@/hooks/use-pos-settings"
 import { useHardwareScanner } from "@/hooks/use-hardware-scanner"
+import type { ScanSource } from "@/lib/hardware-scanner"
+import { ToastAction } from "@/components/ui/toast"
 import { useWakeLock } from "@/hooks/use-wake-lock"
 import { PosSettingsPanel } from "@/components/pos-settings-panel"
 
@@ -114,6 +117,7 @@ interface Product {
 }
 
 const DEFAULT_LOW_STOCK_THRESHOLD = 5
+const SEARCH_RESULT_LIMIT = 8
 
 function lowStockThreshold(product: Product) {
   return Number(product.low_stock_threshold ?? DEFAULT_LOW_STOCK_THRESHOLD)
@@ -136,19 +140,61 @@ function withReturnDefaults(item: CartItem, isReturn: boolean): CartItem {
   }
 }
 
+const OPEN_ON_SELL_ASKED_KEY = "biva-open-on-sell-asked"
+
+/** In-progress sale kept on this device so an app reload (e.g. after printing) keeps it. */
+const SELL_DRAFT_KEY = "biva-sell-draft-v1"
+
+type SellDraft = {
+  tenantId: string
+  cart: CartItem[]
+  transactionType: "sale" | "return"
+  customerName: string
+  customerPhone: string
+  discountAmount: string
+  amountPaid: string
+  isPartPayment: boolean
+  paymentMethod: PaymentMethodId
+  lastReceipt: ReceiptData | null
+  lastReceiptOffline: boolean
+  showReceipt: boolean
+  autoPrintedReceiptId: string | null
+}
+
+function readSellDraft(tenantId: string): SellDraft | null {
+  try {
+    const raw = localStorage.getItem(SELL_DRAFT_KEY)
+    if (!raw) return null
+    const draft = JSON.parse(raw) as SellDraft
+    return draft?.tenantId === tenantId ? draft : null
+  } catch {
+    return null
+  }
+}
+
+function writeSellDraft(draft: SellDraft) {
+  try {
+    localStorage.setItem(SELL_DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    // Storage full or blocked — the sale still works, it just won't survive a reload.
+  }
+}
+
 function SellPageContent() {
   const { user } = useAuth()
   const searchParams = useSearchParams()
   const [search, setSearch] = useState("")
   const [cart, setCart] = useState<CartItem[]>([])
   const [showReceipt, setShowReceipt] = useState(false)
-  const [showCheckout, setShowCheckout] = useState(false)
   const [showCustomerFields, setShowCustomerFields] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null)
   const [lastReceiptOffline, setLastReceiptOffline] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
+  const [pickerSearch, setPickerSearch] = useState("")
+  const [pickerCategory, setPickerCategory] = useState<string | null>(null)
   const [showOversellConfirm, setShowOversellConfirm] = useState(false)
   const [oversellProduct, setOversellProduct] = useState<Product | null>(null)
   const [oversellQty, setOversellQty] = useState(1)
@@ -189,14 +235,18 @@ function SellPageContent() {
   const [showCollectDebt, setShowCollectDebt] = useState(false)
   const [collectDebtQuery, setCollectDebtQuery] = useState("")
   const [searchEditable, setSearchEditable] = useState(false)
+  const [draftReady, setDraftReady] = useState(false)
+  const [confirmVisible, setConfirmVisible] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const checkoutSectionRef = useRef<HTMLElement>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const autoPrintedReceiptIdRef = useRef<string | null>(null)
-  const { settings: posSettings } = usePosSettings()
+  const { settings: posSettings, update: updatePosSettings } = usePosSettings()
 
   const scannerPaused =
-    showCheckout ||
     showReceipt ||
     showScanner ||
+    showPicker ||
     showOversellConfirm ||
     showPosSettings ||
     showCollectDebt
@@ -223,10 +273,82 @@ function SellPageContent() {
       : 0
 
   const openCollectDebt = (query = "") => {
-    setShowCheckout(false)
     setCollectDebtQuery(query)
     setShowCollectDebt(true)
   }
+
+  const tenantId = user?.tenant_id ?? null
+
+  useEffect(() => {
+    if (!tenantId || draftReady) return
+    const linkedReturn = searchParams.get("fromReceipt") || searchParams.get("type") === "return"
+    const draft = readSellDraft(tenantId)
+    if (draft) {
+      if (!linkedReturn) {
+        setCart(draft.cart ?? [])
+        setTransactionType(draft.transactionType === "return" ? "return" : "sale")
+        setCustomerName(draft.customerName ?? "")
+        setCustomerPhone(draft.customerPhone ?? "")
+        setDiscountAmount(draft.discountAmount ?? "0")
+        setAmountPaid(draft.amountPaid ?? "0")
+        setIsPartPayment(Boolean(draft.isPartPayment))
+        setPaymentMethod(draft.paymentMethod ?? "cash")
+      }
+      autoPrintedReceiptIdRef.current = draft.autoPrintedReceiptId ?? null
+      setLastReceipt(draft.lastReceipt ?? null)
+      setLastReceiptOffline(Boolean(draft.lastReceiptOffline))
+      setShowReceipt(Boolean(draft.showReceipt && draft.lastReceipt))
+    }
+    setDraftReady(true)
+  }, [tenantId, draftReady, searchParams])
+
+  useEffect(() => {
+    if (!draftReady || !tenantId) return
+    writeSellDraft({
+      tenantId,
+      cart,
+      transactionType,
+      customerName,
+      customerPhone,
+      discountAmount,
+      amountPaid,
+      isPartPayment,
+      paymentMethod,
+      lastReceipt,
+      lastReceiptOffline,
+      showReceipt,
+      autoPrintedReceiptId: autoPrintedReceiptIdRef.current,
+    })
+  }, [
+    draftReady,
+    tenantId,
+    cart,
+    transactionType,
+    customerName,
+    customerPhone,
+    discountAmount,
+    amountPaid,
+    isPartPayment,
+    paymentMethod,
+    lastReceipt,
+    lastReceiptOffline,
+    showReceipt,
+  ])
+
+  // Keep cart lines in step with the latest stock and prices.
+  useEffect(() => {
+    if (products.length === 0) return
+    setCart((prev) => {
+      let changed = false
+      const next = prev.map((item) => {
+        const fresh = products.find((p) => p.id === item.product.id)
+        if (!fresh || fresh === item.product) return item
+        changed = true
+        return { ...item, product: fresh }
+      })
+      return changed ? next : prev
+    })
+  }, [products])
 
   useWakeLock(posSettings.keepScreenAwake && !scannerPaused)
 
@@ -241,9 +363,13 @@ function SellPageContent() {
     if (!showReceipt || !lastReceipt || !posSettings.autoPrintReceipt) return
     if (autoPrintedReceiptIdRef.current === lastReceipt.id) return
     autoPrintedReceiptIdRef.current = lastReceipt.id
+    if (tenantId) {
+      const draft = readSellDraft(tenantId)
+      if (draft) writeSellDraft({ ...draft, autoPrintedReceiptId: lastReceipt.id })
+    }
     const timer = window.setTimeout(() => printThermalReceipt(), 400)
     return () => window.clearTimeout(timer)
-  }, [showReceipt, lastReceipt, posSettings.autoPrintReceipt])
+  }, [showReceipt, lastReceipt, posSettings.autoPrintReceipt, tenantId])
 
   useEffect(() => {
     const from = searchParams.get("fromReceipt")
@@ -317,11 +443,32 @@ function SellPageContent() {
   )
   const outOfStockProducts = products.filter((product) => product.quantity <= 0)
 
-  const filteredProducts = products.filter((product) => {
-    if (!product.name.toLowerCase().includes(search.toLowerCase())) return false
+  const categories = Array.from(
+    new Set(
+      products
+        .map((product) => product.category_name)
+        .filter((name): name is string => Boolean(name))
+    )
+  ).sort((a, b) => a.localeCompare(b))
+
+  const pickerProducts = products.filter((product) => {
+    const q = pickerSearch.trim().toLowerCase()
+    if (q && !product.name.toLowerCase().includes(q)) return false
+    if (pickerCategory && product.category_name !== pickerCategory) return false
     if (showLowStockOnly) return product.quantity <= lowStockThreshold(product)
     return true
   })
+
+  const searchQuery = searchEditable ? search.trim().toLowerCase() : ""
+  const searchResults = searchQuery
+    ? products
+        .filter(
+          (product) =>
+            product.name.toLowerCase().includes(searchQuery) ||
+            product.scan_code?.toLowerCase() === searchQuery
+        )
+        .slice(0, SEARCH_RESULT_LIMIT)
+    : []
 
   const cartTotal = cart.reduce(
     (sum, item) => sum + item.quantity * item.product.unit_price,
@@ -337,6 +484,21 @@ function SellPageContent() {
     isPartPayment,
   })
   const { amountReceived, amountDue, changeGiven } = checkoutPayment
+
+  const hasCart = cart.length > 0
+
+  useEffect(() => {
+    const target = confirmButtonRef.current
+    if (!hasCart || !target) {
+      setConfirmVisible(false)
+      return
+    }
+    const observer = new IntersectionObserver(([entry]) =>
+      setConfirmVisible(entry.isIntersecting)
+    )
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [hasCart])
 
   const getRemainingStock = (product: Product) => {
     const cartItem = cart.find((item) => item.product.id === product.id)
@@ -354,21 +516,22 @@ function SellPageContent() {
       return
     }
 
+    setError("")
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id)
       if (existing) {
-        return prev.map((item) =>
-          item.product.id === product.id
-            ? withReturnDefaults(
-                { ...item, quantity: item.quantity + quantity },
-                transactionType === "return"
-              )
-            : item
-        )
+        // Move the line to the top so the latest scan is always visible.
+        return [
+          withReturnDefaults(
+            { ...existing, quantity: existing.quantity + quantity },
+            transactionType === "return"
+          ),
+          ...prev.filter((item) => item.product.id !== product.id),
+        ]
       }
       return [
-        ...prev,
         withReturnDefaults({ product, quantity }, transactionType === "return"),
+        ...prev,
       ]
     })
   }
@@ -388,11 +551,11 @@ function SellPageContent() {
           )
         }
         return [
-          ...prev,
           withReturnDefaults(
             { product: oversellProduct, quantity: oversellQty },
             transactionType === "return"
           ),
+          ...prev,
         ]
       })
     }
@@ -647,9 +810,10 @@ function SellPageContent() {
 
       setLastReceipt(receipt)
       setLastReceiptOffline(Boolean(queued))
-      setShowCheckout(false)
       setShowReceipt(true)
+      setShowCustomerFields(false)
       clearCart()
+      window.scrollTo({ top: 0 })
       void mutate(undefined, { revalidate: navigator.onLine })
 
       if (queued && serverError) {
@@ -671,31 +835,61 @@ function SellPageContent() {
     }
   }
 
-  const handleScanInput = (code: string) => {
-    const trimmedCode = code.trim()
-    if (!trimmedCode) return
+  const findByScanCode = (code: string) =>
+    products.find((p) => p.scan_code?.toLowerCase() === code.trim().toLowerCase())
 
-    const matchedProduct = products.find(
-      (p) => p.scan_code?.toLowerCase() === trimmedCode.toLowerCase()
-    )
+  const handleScanInput = (code: string): boolean => {
+    const trimmedCode = code.trim()
+    if (!trimmedCode) return false
+
+    const matchedProduct = findByScanCode(trimmedCode)
 
     if (matchedProduct) {
       addToCart(matchedProduct)
       setSearch("")
       setSearchEditable(false)
       if (posSettings.scanBeep) playScanBeep(true)
-      toast({
-        title: "Added to cart",
-        description: matchedProduct.name,
-      })
-    } else {
-      if (posSettings.scanBeep) playScanBeep(false)
-      toast({
-        title: "Product not found",
-        description: `No product with scan code "${trimmedCode}". Add it under Products first.`,
-        variant: "destructive",
-      })
+      return true
     }
+    if (posSettings.scanBeep) playScanBeep(false)
+    toast({
+      title: "Product not found",
+      description: `No product with scan code "${trimmedCode}". Add it under Products first.`,
+      variant: "destructive",
+    })
+    return false
+  }
+
+  const offerOpenOnSell = () => {
+    if (posSettings.openOnSell) return
+    try {
+      if (localStorage.getItem(OPEN_ON_SELL_ASKED_KEY)) return
+      localStorage.setItem(OPEN_ON_SELL_ASKED_KEY, "1")
+    } catch {
+      return
+    }
+    toast({
+      title: "Is this a till?",
+      description: "Open BIVA straight on the Sell screen every time on this device.",
+      duration: 12000,
+      action: (
+        <ToastAction
+          altText="Open on Sell screen"
+          onClick={() => updatePosSettings({ openOnSell: true })}
+        >
+          Yes
+        </ToastAction>
+      ),
+    })
+  }
+
+  const handleHardwareScan = (code: string, source: ScanSource) => {
+    // While the cashier is typing a search, Enter submits the search instead.
+    if (source === "allowed" && searchEditable) return false
+    // Fast typing in cash/discount fields is only a scan if it matches a product.
+    if (source === "field" && !findByScanCode(code)) return false
+    if (handleScanInput(code)) offerOpenOnSell()
+    return true
   }
 
   const handleSearchSubmit = (query: string) => {
@@ -713,10 +907,6 @@ function SellPageContent() {
       addToCart(matchedProduct)
       setSearch("")
       setSearchEditable(false)
-      toast({
-        title: "Added to cart",
-        description: matchedProduct.name,
-      })
     } else {
       toast({
         title: "No match",
@@ -726,33 +916,138 @@ function SellPageContent() {
     }
   }
 
+  const pickSearchResult = (product: Product) => {
+    addToCart(product)
+    setSearch("")
+    setSearchEditable(false)
+    searchInputRef.current?.blur()
+  }
+
   useHardwareScanner({
     enabled: posSettings.hardwareScanner,
     paused: scannerPaused,
     allowedInputRef: searchInputRef,
-    onScan: handleScanInput,
+    maxKeyGapMs: posSettings.scannerKeyGapMs,
+    onScan: handleHardwareScan,
   })
 
   const printReceipt = () => {
     printReceiptWithHint()
   }
 
+  const scrollToCheckout = () => {
+    checkoutSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
   const isReturn = transactionType === "return"
 
+  const renderStockBadges = (product: Product) => {
+    const remaining = getRemainingStock(product)
+    const inCart = cart.find((item) => item.product.id === product.id)
+    const outOfStock = remaining <= 0
+    const lowStock = !outOfStock && remaining <= lowStockThreshold(product)
+    return (
+      <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-muted-foreground">
+        <span className={cn(outOfStock && !isReturn && "text-destructive")}>
+          {remaining} in stock
+        </span>
+        {!isReturn && outOfStock && (
+          <Badge variant="destructive" className="h-5 text-[10px]">
+            Out of stock
+          </Badge>
+        )}
+        {!isReturn && lowStock && (
+          <Badge
+            variant="outline"
+            className="h-5 border-warning/50 bg-warning/10 text-[10px] text-warning-foreground"
+          >
+            Low stock
+          </Badge>
+        )}
+        {inCart && (
+          <Badge variant="default" className="bg-primary h-5 text-[10px]">
+            {inCart.quantity} in cart
+          </Badge>
+        )}
+      </div>
+    )
+  }
+
+  const renderProductRow = (product: Product, onPick: (product: Product) => void) => {
+    const inCart = cart.some((item) => item.product.id === product.id)
+    return (
+      <button
+        key={product.id}
+        type="button"
+        onClick={() => onPick(product)}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg border bg-card p-3 text-left transition-all active:scale-[0.98] touch-manipulation",
+          inCart && "ring-2 ring-primary bg-primary/5"
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold">{product.name}</p>
+          {product.has_specifications &&
+            formatSpecifications(product.specifications) && (
+              <p className="truncate text-xs text-muted-foreground">
+                {formatSpecifications(product.specifications)}
+              </p>
+            )}
+          <p className="text-sm font-semibold text-primary">
+            {formatPrice(product.unit_price)}
+          </p>
+          {renderStockBadges(product)}
+        </div>
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Plus className="size-5" />
+        </span>
+      </button>
+    )
+  }
+
   return (
-    <main className="pb-[calc(8rem+env(safe-area-inset-bottom))]">
-      {/* Top Header */}
+    <main
+      className={cn(
+        hasCart && !confirmVisible
+          ? "pb-[calc(8rem+env(safe-area-inset-bottom))]"
+          : "pb-4"
+      )}
+    >
+      {/* Top: scan / search / pick */}
       <header className="sticky top-0 z-20 bg-background border-b pt-[env(safe-area-inset-top)]">
-        <div className="p-4 space-y-3">
+        <div className="p-3 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
-            <h1 className="text-xl font-bold leading-tight">
-              {isReturn ? "Process Return" : "Make a Sale"}
-            </h1>
+            <div className="grid flex-1 grid-cols-2 gap-1 p-1 bg-muted rounded-lg max-w-[14rem]">
+              <button
+                type="button"
+                onClick={() => setTransactionType("sale")}
+                className={cn(
+                  "h-9 rounded-md text-sm font-semibold transition-colors",
+                  !isReturn
+                    ? "bg-background shadow-sm text-foreground"
+                    : "text-muted-foreground"
+                )}
+              >
+                Sale
+              </button>
+              <button
+                type="button"
+                onClick={() => setTransactionType("return")}
+                className={cn(
+                  "h-9 rounded-md text-sm font-semibold transition-colors",
+                  isReturn
+                    ? "bg-background shadow-sm text-foreground"
+                    : "text-muted-foreground"
+                )}
+              >
+                Return
+              </button>
+            </div>
             <div className="flex items-center gap-1 shrink-0">
               <Button
                 variant="outline"
                 size="icon"
-                className="size-11"
+                className="size-10"
                 onClick={() => openCollectDebt()}
                 aria-label="Collect a debt"
                 title="Collect a debt"
@@ -762,329 +1057,182 @@ function SellPageContent() {
               <Button
                 variant="outline"
                 size="icon"
-                className="size-11"
+                className="size-10"
                 onClick={() => setShowPosSettings(true)}
                 aria-label="POS settings"
               >
                 <Settings2 className="size-5" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-11"
-                onClick={() => setShowScanner(true)}
-                aria-label="Open camera scanner"
-              >
-                <ScanLine className="size-5" />
-              </Button>
             </div>
           </div>
 
-          {posSettings.hardwareScanner && !scannerPaused && (
-            <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs text-primary">
-              <Radio className="size-3.5 shrink-0 animate-pulse" />
-              <span>Scanner ready — scan barcodes or tap search to type</span>
-            </div>
-          )}
-
-          {/* Sale/Return Segmented Toggle */}
-          <div className="grid grid-cols-2 gap-1 p-1 bg-muted rounded-lg">
-            <button
-              type="button"
-              onClick={() => setTransactionType("sale")}
-              className={cn(
-                "h-10 rounded-md text-sm font-semibold transition-colors",
-                !isReturn
-                  ? "bg-background shadow-sm text-foreground"
-                  : "text-muted-foreground"
-              )}
-            >
-              Sale
-            </button>
-            <button
-              type="button"
-              onClick={() => setTransactionType("return")}
-              className={cn(
-                "h-10 rounded-md text-sm font-semibold transition-colors",
-                isReturn
-                  ? "bg-background shadow-sm text-foreground"
-                  : "text-muted-foreground"
-              )}
-            >
-              Return
-            </button>
-          </div>
-
-          {isReturn && originalReceiptId && (
-            <div className="rounded-lg border bg-warning/10 border-warning/30 p-3 text-sm">
-              <p className="font-semibold flex items-center gap-2">
-                <Link2 className="size-4 shrink-0" />
-                Returning from sale{" "}
-                {formatReceiptLinkLabel(
-                  linkedSale?.id ?? originalReceiptId,
-                  linkedSale?.created_at
-                )}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Quantities are capped to what is still returnable on that sale.
-                {linkedSale?.net_amount != null && (
-                  <> Original total: {formatPrice(linkedSale.net_amount)}.</>
-                )}
-              </p>
-              <Link
-                href={`/dashboard/sales?receipt=${originalReceiptId}`}
-                className="text-xs text-primary hover:underline mt-1 inline-block"
-              >
-                View original sale in history
-              </Link>
-            </div>
-          )}
-
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
-            <Input
-              ref={searchInputRef}
-              type="search"
-              inputMode={searchEditable ? "search" : "none"}
-              placeholder="Search or scan products..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  if (searchEditable) {
-                    handleSearchSubmit(search)
-                  } else {
-                    handleScanInput(search)
-                  }
-                  setSearch("")
-                  setSearchEditable(false)
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                type="search"
+                inputMode={searchEditable ? "search" : "none"}
+                placeholder={
+                  posSettings.hardwareScanner ? "Scan or tap to search…" : "Search products…"
                 }
-              }}
-              onClick={() => setSearchEditable(true)}
-              onBlur={() => {
-                if (!search.trim()) setSearchEditable(false)
-              }}
-              className="pl-10 h-12 text-base touch-manipulation"
-              autoComplete="off"
-              enterKeyHint="search"
-            />
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (searchEditable) {
+                      handleSearchSubmit(search)
+                    } else {
+                      handleScanInput(search)
+                    }
+                    setSearch("")
+                    setSearchEditable(false)
+                  }
+                }}
+                onClick={() => setSearchEditable(true)}
+                onBlur={() => {
+                  if (!search.trim()) setSearchEditable(false)
+                }}
+                className="pl-10 h-12 text-base touch-manipulation"
+                autoComplete="off"
+                enterKeyHint="search"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-12 shrink-0"
+              onClick={() => setShowScanner(true)}
+              aria-label="Scan with camera"
+              title="Scan with camera"
+            >
+              <ScanLine className="size-5" />
+            </Button>
+            <Button
+              variant="default"
+              className="h-12 shrink-0 px-3"
+              onClick={() => setShowPicker(true)}
+              aria-label="Pick products"
+            >
+              <LayoutGrid className="size-5" />
+              <span className="hidden min-[380px]:inline">Pick</span>
+            </Button>
           </div>
+
+          {posSettings.hardwareScanner && !scannerPaused && !searchEditable && (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <Radio className="size-3.5 shrink-0 animate-pulse" />
+              Scanner ready
+            </p>
+          )}
         </div>
+
+        {searchResults.length > 0 && (
+          <div className="max-h-[50vh] overflow-y-auto border-t bg-background px-3 pb-3 pt-2 space-y-2">
+            {searchResults.map((product) => renderProductRow(product, pickSearchResult))}
+          </div>
+        )}
+        {searchQuery && searchResults.length === 0 && !isLoading && (
+          <p className="border-t px-3 py-3 text-sm text-muted-foreground">
+            No product matching &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )}
       </header>
 
-      <div className="p-4">
-        {error && (
-          <div className="rounded-lg bg-destructive/10 p-3 text-destructive text-sm text-center mb-4">
-            {error}
+      <div className="p-3 space-y-4">
+        {isReturn && originalReceiptId && (
+          <div className="rounded-lg border bg-warning/10 border-warning/30 p-3 text-sm">
+            <p className="font-semibold flex items-center gap-2">
+              <Link2 className="size-4 shrink-0" />
+              Returning from sale{" "}
+              {formatReceiptLinkLabel(
+                linkedSale?.id ?? originalReceiptId,
+                linkedSale?.created_at
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Quantities are capped to what is still returnable on that sale.
+              {linkedSale?.net_amount != null && (
+                <> Original total: {formatPrice(linkedSale.net_amount)}.</>
+              )}
+            </p>
+            <Link
+              href={`/dashboard/sales?receipt=${originalReceiptId}`}
+              className="text-xs text-primary hover:underline mt-1 inline-block"
+            >
+              View original sale in history
+            </Link>
           </div>
         )}
 
-        {!isReturn && (lowStockProducts.length > 0 || outOfStockProducts.length > 0) && (
-          <button
-            type="button"
-            onClick={() => setShowLowStockOnly((value) => !value)}
-            className="mb-3 flex w-full items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-left text-sm text-warning-foreground"
-          >
-            <AlertTriangle className="size-4 shrink-0 text-warning" />
-            <span className="flex-1">
-              {[
-                lowStockProducts.length > 0 && `${lowStockProducts.length} low`,
-                outOfStockProducts.length > 0 && `${outOfStockProducts.length} out of stock`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-            <span className="text-xs font-medium underline">
-              {showLowStockOnly ? "Show all" : "Show these"}
-            </span>
-          </button>
-        )}
-
-        {/* Products List */}
-        {isLoading ? (
-          <div className="flex flex-col gap-3">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-20 w-full rounded-xl" />
-            ))}
+        {/* Cart */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold text-sm uppercase text-muted-foreground">
+              {isReturn ? "Return items" : "Cart"} ({cartItemCount})
+            </h2>
+            {hasCart && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearCart}
+                className="text-destructive h-8 px-2"
+              >
+                <Trash2 className="size-4 mr-1" />
+                Clear
+              </Button>
+            )}
           </div>
-        ) : filteredProducts.length === 0 ? (
-          <Empty className="mt-12">
-            <EmptyMedia>
-              <Package className="size-12 text-muted-foreground" />
-            </EmptyMedia>
-            <EmptyHeader>
-              <EmptyTitle>
-                {search ? "No products found" : "No products available"}
-              </EmptyTitle>
-              <EmptyDescription>
-                {search
-                  ? "Try a different search term"
-                  : "Add products first to start selling"}
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {filteredProducts.map((product) => {
-              const remaining = getRemainingStock(product)
-              const inCart = cart.find((item) => item.product.id === product.id)
-              const outOfStock = remaining <= 0
-              const lowStock = !outOfStock && remaining <= lowStockThreshold(product)
 
-              return (
-                <Card
-                  key={product.id}
+          {isLoading && !hasCart ? (
+            <Skeleton className="h-24 w-full rounded-xl" />
+          ) : !hasCart ? (
+            <Empty className="rounded-xl border border-dashed py-8">
+              <EmptyMedia>
+                <ShoppingCart className="size-10 text-muted-foreground" />
+              </EmptyMedia>
+              <EmptyHeader>
+                <EmptyTitle>
+                  {products.length === 0 ? "No products yet" : "Cart is empty"}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {products.length === 0
+                    ? "Add products first to start selling."
+                    : "Scan a barcode, search above, or tap Pick to add items."}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {cart.map((item, index) => (
+                <div
+                  key={item.product.id}
                   className={cn(
-                    "cursor-pointer transition-all active:scale-[0.98]",
-                    inCart && "ring-2 ring-primary bg-primary/5"
+                    "flex flex-col gap-2 rounded-lg border p-2.5",
+                    index === 0 ? "border-primary/40 bg-primary/5" : "bg-muted/40"
                   )}
-                  onClick={() => addToCart(product)}
                 >
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold truncate text-base">
-                          {product.name}
-                        </h3>
-                        {product.has_specifications &&
-                          formatSpecifications(product.specifications) && (
-                            <p className="text-xs text-muted-foreground truncate">
-                              {formatSpecifications(product.specifications)}
-                            </p>
-                          )}
-                        <div className="text-sm text-primary font-semibold">
-                          {formatPrice(product.unit_price)}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                          <span
-                            className={cn(
-                              outOfStock && !isReturn && "text-destructive"
-                            )}
-                          >
-                            {remaining} in stock
-                          </span>
-                          {!isReturn && outOfStock && (
-                            <Badge variant="destructive" className="h-5 text-[10px]">
-                              Out of stock
-                            </Badge>
-                          )}
-                          {!isReturn && lowStock && (
-                            <Badge
-                              variant="outline"
-                              className="h-5 border-warning/50 bg-warning/10 text-[10px] text-warning-foreground"
-                            >
-                              Low stock
-                            </Badge>
-                          )}
-                          {inCart && (
-                            <Badge variant="default" className="bg-primary h-5 text-[10px]">
-                              {inCart.quantity} in cart
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-
-                      <Button
-                        size="icon"
-                        variant="default"
-                        className="size-10 rounded-full shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          addToCart(product)
-                        }}
-                        aria-label={`Add ${product.name}`}
-                      >
-                        <Plus className="size-5" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Sticky Cart Bar (when items in cart) */}
-      {cart.length > 0 && (
-        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] left-0 right-0 z-30 p-3 bg-background/95 backdrop-blur border-t shadow-lg">
-          <Button
-            onClick={() => setShowCheckout(true)}
-            size="lg"
-            className="w-full h-14 text-base font-semibold flex items-center justify-between px-4 touch-manipulation"
-          >
-            <span className="flex items-center gap-2">
-              <ShoppingCart className="size-5" />
-              {cartItemCount} {cartItemCount === 1 ? "item" : "items"}
-            </span>
-            <span className="flex items-center gap-2">
-              {formatPrice(cartTotal)}
-              <span className="opacity-75">· Review</span>
-            </span>
-          </Button>
-        </div>
-      )}
-
-      {/* Checkout Drawer */}
-      <Drawer open={showCheckout} onOpenChange={setShowCheckout}>
-        <DrawerContent className="max-h-[92vh]">
-          <DrawerHeader className="text-left">
-            <DrawerTitle className="text-xl">
-              {isReturn ? "Review Return" : "Review Sale"}
-            </DrawerTitle>
-            <DrawerDescription>
-              {isReturn
-                ? "Set condition and whether each item goes back to stock or is discarded."
-                : "Confirm cart, customer & payment details."}
-            </DrawerDescription>
-          </DrawerHeader>
-
-          <div className="overflow-y-auto px-4 space-y-4">
-            {/* Cart Items */}
-            <section>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-sm uppercase text-muted-foreground">
-                  Cart ({cartItemCount})
-                </h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearCart}
-                  className="text-destructive h-8 px-2"
-                >
-                  <Trash2 className="size-4 mr-1" />
-                  Clear
-                </Button>
-              </div>
-              <div className="flex flex-col gap-2">
-                {cart.map((item) => (
-                  <div
-                    key={item.product.id}
-                    className="flex flex-col gap-2 bg-muted/50 rounded-lg p-2"
-                  >
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold truncate text-base">
-                          {item.product.name}
-                        </h3>
-                        {item.product.has_specifications &&
-                          formatSpecifications(item.product.specifications) && (
-                            <p className="text-xs text-muted-foreground truncate">
-                              {formatSpecifications(item.product.specifications)}
-                            </p>
-                          )}
-                        {isReturn &&
-                          originalReceiptId &&
-                          returnableMax[item.product.id] !== undefined && (
-                            <Badge variant="outline" className="mt-1 h-5 text-[10px]">
-                              Max {returnableMax[item.product.id]} from sale
-                            </Badge>
-                          )}
-                        <p className="text-xs text-muted-foreground">
-                        {formatPrice(item.product.unit_price)} ×{" "}
-                        {item.quantity} ={" "}
-                        <span className="font-semibold">
+                      <h3 className="font-semibold truncate text-base">
+                        {item.product.name}
+                      </h3>
+                      {item.product.has_specifications &&
+                        formatSpecifications(item.product.specifications) && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {formatSpecifications(item.product.specifications)}
+                          </p>
+                        )}
+                      {isReturn &&
+                        originalReceiptId &&
+                        returnableMax[item.product.id] !== undefined && (
+                          <Badge variant="outline" className="mt-1 h-5 text-[10px]">
+                            Max {returnableMax[item.product.id]} from sale
+                          </Badge>
+                        )}
+                      <p className="text-xs text-muted-foreground">
+                        {formatPrice(item.product.unit_price)} × {item.quantity} ={" "}
+                        <span className="font-semibold text-foreground">
                           {formatPrice(item.product.unit_price * item.quantity)}
                         </span>
                       </p>
@@ -1093,65 +1241,68 @@ function SellPageContent() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="size-8"
-                        onClick={() =>
-                          updateCartQuantity(item.product.id, -1)
-                        }
+                        className="size-9"
+                        onClick={() => updateCartQuantity(item.product.id, -1)}
+                        aria-label={`Remove one ${item.product.name}`}
                       >
                         <Minus className="size-4" />
                       </Button>
-                      <span className="w-8 text-center font-semibold tabular-nums text-sm">
+                      <span className="w-8 text-center font-semibold tabular-nums">
                         {item.quantity}
                       </span>
                       <Button
                         variant="outline"
                         size="icon"
-                        className="size-8"
-                        onClick={() =>
-                          updateCartQuantity(item.product.id, 1)
-                        }
+                        className="size-9"
+                        onClick={() => updateCartQuantity(item.product.id, 1)}
+                        aria-label={`Add one ${item.product.name}`}
                       >
                         <Plus className="size-4" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 text-destructive"
+                        className="size-9 text-destructive"
                         onClick={() => removeFromCart(item.product.id)}
+                        aria-label={`Remove ${item.product.name}`}
                       >
                         <X className="size-4" />
                       </Button>
                     </div>
-                    </div>
-                    {isReturn && (
-                      <ReturnItemControls
-                        compact
-                        value={{
-                          returnCondition:
-                            item.returnCondition ??
-                            DEFAULT_RETURN_ITEM_STATE.returnCondition,
-                          returnDisposition:
-                            item.returnDisposition ??
-                            DEFAULT_RETURN_ITEM_STATE.returnDisposition,
-                        }}
-                        onChange={(next) =>
-                          setCart((prev) =>
-                            prev.map((row) =>
-                              row.product.id === item.product.id
-                                ? { ...row, ...next }
-                                : row
-                            )
-                          )
-                        }
-                      />
-                    )}
                   </div>
-                ))}
-              </div>
-            </section>
+                  {isReturn && (
+                    <ReturnItemControls
+                      compact
+                      value={{
+                        returnCondition:
+                          item.returnCondition ??
+                          DEFAULT_RETURN_ITEM_STATE.returnCondition,
+                        returnDisposition:
+                          item.returnDisposition ??
+                          DEFAULT_RETURN_ITEM_STATE.returnDisposition,
+                      }}
+                      onChange={(next) =>
+                        setCart((prev) =>
+                          prev.map((row) =>
+                            row.product.id === item.product.id
+                              ? { ...row, ...next }
+                              : row
+                          )
+                        )
+                      }
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
+        {/* Checkout — scroll down to complete */}
+        {hasCart && (
+          <section ref={checkoutSectionRef} className="scroll-mt-40 space-y-4">
             {/* Customer Section (Collapsible) */}
-            <section className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowCustomerFields((v) => !v)}
@@ -1208,13 +1359,13 @@ function SellPageContent() {
                   )}
                 </div>
               )}
-            </section>
+            </div>
 
             {/* Payment Section */}
-            <section className="space-y-3">
-              <h3 className="font-semibold text-sm uppercase text-muted-foreground">
-                Payment
-              </h3>
+            <div className="space-y-3">
+              <h2 className="font-semibold text-sm uppercase text-muted-foreground">
+                {isReturn ? "Refund" : "Payment"}
+              </h2>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1229,6 +1380,7 @@ function SellPageContent() {
                     value={discountAmount}
                     onChange={(e) => setDiscountAmount(e.target.value)}
                     className="h-11"
+                    inputMode="decimal"
                   />
                 </div>
                 <div>
@@ -1263,25 +1415,25 @@ function SellPageContent() {
               )}
 
               {transactionType === "sale" && (
-              <Button
-                type="button"
-                variant={isPartPayment ? "default" : "outline"}
-                onClick={() => {
-                  setIsPartPayment((prev) => {
-                    const next = !prev
-                    if (next) setShowCustomerFields(true)
-                    setPaymentMethod(
-                      initialPaymentMethodForCheckout(next, amountTendered)
-                    )
-                    return next
-                  })
-                }}
-                className="w-full h-11"
-              >
-                {isPartPayment
-                  ? "✓ Credit / part payment enabled"
-                  : "Enable credit / part payment"}
-              </Button>
+                <Button
+                  type="button"
+                  variant={isPartPayment ? "default" : "outline"}
+                  onClick={() => {
+                    setIsPartPayment((prev) => {
+                      const next = !prev
+                      if (next) setShowCustomerFields(true)
+                      setPaymentMethod(
+                        initialPaymentMethodForCheckout(next, amountTendered)
+                      )
+                      return next
+                    })
+                  }}
+                  className="w-full h-11"
+                >
+                  {isPartPayment
+                    ? "✓ Credit / part payment enabled"
+                    : "Enable credit / part payment"}
+                </Button>
               )}
 
               {transactionType === "sale" && amountTendered > 0 && (
@@ -1365,16 +1517,16 @@ function SellPageContent() {
                   </div>
                 )}
               </div>
-            </section>
-          </div>
+            </div>
 
-          <DrawerFooter>
             {error && (
-              <div className="rounded-lg bg-destructive/10 p-2 text-destructive text-sm text-center">
+              <div className="rounded-lg bg-destructive/10 p-3 text-destructive text-sm text-center">
                 {error}
               </div>
             )}
+
             <Button
+              ref={confirmButtonRef}
               onClick={handleCheckout}
               disabled={loading}
               size="lg"
@@ -1390,12 +1542,146 @@ function SellPageContent() {
                 </>
               )}
             </Button>
+          </section>
+        )}
+
+        {!hasCart && error && (
+          <div className="rounded-lg bg-destructive/10 p-3 text-destructive text-sm text-center">
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* Running total — tap to jump down to payment */}
+      {hasCart && !confirmVisible && (
+        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] left-0 right-0 z-30 p-3 bg-background/95 backdrop-blur border-t shadow-lg">
+          <Button
+            onClick={scrollToCheckout}
+            size="lg"
+            className="w-full h-14 text-base font-semibold flex items-center justify-between px-4 touch-manipulation"
+          >
+            <span className="flex items-center gap-2">
+              <ShoppingCart className="size-5" />
+              {cartItemCount} {cartItemCount === 1 ? "item" : "items"}
+            </span>
+            <span className="flex items-center gap-2">
+              {formatPrice(netTotal)}
+              <span className="flex items-center opacity-75">
+                · Pay <ArrowDown className="ml-1 size-4" />
+              </span>
+            </span>
+          </Button>
+        </div>
+      )}
+
+      {/* Product picker */}
+      <Drawer open={showPicker} onOpenChange={setShowPicker}>
+        <DrawerContent className="max-h-[92vh]">
+          <DrawerHeader className="text-left pb-2">
+            <DrawerTitle>Pick products</DrawerTitle>
+            <DrawerDescription>Tap a product to add it to the cart.</DrawerDescription>
+          </DrawerHeader>
+
+          <div className="px-4 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Filter products…"
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                className="pl-10 h-11"
+                autoComplete="off"
+              />
+            </div>
+            {(categories.length > 0 ||
+              (!isReturn && (lowStockProducts.length > 0 || outOfStockProducts.length > 0))) && (
+              <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+                <button
+                  type="button"
+                  onClick={() => setPickerCategory(null)}
+                  className={cn(
+                    "h-8 shrink-0 rounded-full border px-3 text-sm",
+                    pickerCategory === null
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "bg-background"
+                  )}
+                >
+                  All
+                </button>
+                {categories.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => setPickerCategory(name)}
+                    className={cn(
+                      "h-8 shrink-0 rounded-full border px-3 text-sm",
+                      pickerCategory === name
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "bg-background"
+                    )}
+                  >
+                    {name}
+                  </button>
+                ))}
+                {!isReturn &&
+                  (lowStockProducts.length > 0 || outOfStockProducts.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLowStockOnly((value) => !value)}
+                      className={cn(
+                        "flex h-8 shrink-0 items-center gap-1 rounded-full border px-3 text-sm",
+                        showLowStockOnly
+                          ? "border-warning bg-warning text-warning-foreground"
+                          : "border-warning/40 bg-warning/10"
+                      )}
+                    >
+                      <AlertTriangle className="size-3.5" />
+                      Low stock
+                    </button>
+                  )}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-2 flex-1 overflow-y-auto px-4 pb-2 space-y-2">
+            {isLoading ? (
+              [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)
+            ) : pickerProducts.length === 0 ? (
+              <Empty className="py-8">
+                <EmptyMedia>
+                  <Package className="size-10 text-muted-foreground" />
+                </EmptyMedia>
+                <EmptyHeader>
+                  <EmptyTitle>
+                    {products.length === 0 ? "No products available" : "No products found"}
+                  </EmptyTitle>
+                  <EmptyDescription>
+                    {products.length === 0
+                      ? "Add products first to start selling"
+                      : "Try a different filter"}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              pickerProducts.map((product) => renderProductRow(product, addToCart))
+            )}
+          </div>
+
+          <DrawerFooter className="pt-2">
             <Button
-              variant="ghost"
-              onClick={() => setShowCheckout(false)}
-              className="w-full"
+              size="lg"
+              className="w-full h-12 text-base font-semibold"
+              onClick={() => setShowPicker(false)}
             >
-              Keep shopping
+              Done
+              {hasCart && (
+                <>
+                  {" "}
+                  · {cartItemCount} {cartItemCount === 1 ? "item" : "items"} ·{" "}
+                  {formatPrice(cartTotal)}
+                </>
+              )}
             </Button>
           </DrawerFooter>
         </DrawerContent>

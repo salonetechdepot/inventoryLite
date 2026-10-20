@@ -49,21 +49,26 @@ export function prefetchDashboardRoutes(
   }
 }
 
-/** Cache App Router flight payloads in the service worker (supplements prefetch). */
+function warmRoute(route: string, headers: Record<string, string>) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 4_000)
+  return fetch(route, {
+    credentials: "same-origin",
+    headers,
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer))
+}
+
+/**
+ * Cache App Router flight payloads and page HTML in the service worker
+ * (supplements prefetch) so a full reload offline still opens the app.
+ */
 export async function warmDashboardRscCache(): Promise<void> {
   if (isBrowserOffline()) return
   await Promise.allSettled(
-    DASHBOARD_OFFLINE_ROUTES.map((route) => {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 4_000)
-      return fetch(route, {
-        credentials: "same-origin",
-        headers: {
-          RSC: "1",
-          "Next-Router-Prefetch": "1",
-        },
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timer))
-    })
+    DASHBOARD_OFFLINE_ROUTES.flatMap((route) => [
+      warmRoute(route, { RSC: "1", "Next-Router-Prefetch": "1" }),
+      warmRoute(route, { Accept: "text/html" }),
+    ])
   )
 }

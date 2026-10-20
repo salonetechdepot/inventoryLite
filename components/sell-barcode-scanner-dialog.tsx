@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  barcodeDetectorSupported,
+  cameraAutoScanSupported,
   createBarcodeDetector,
   scanVideoForBarcode,
   startCameraStream,
@@ -32,7 +32,7 @@ export function SellBarcodeScannerDialog({ open, onClose, onScan }: Props) {
   const onCloseRef = useRef(onClose)
   const [error, setError] = useState("")
   const [cameraReady, setCameraReady] = useState(false)
-  const canAutoScan = barcodeDetectorSupported()
+  const canAutoScan = cameraAutoScanSupported()
 
   onScanRef.current = onScan
   onCloseRef.current = onClose
@@ -74,7 +74,13 @@ export function SellBarcodeScannerDialog({ open, onClose, onScan }: Props) {
         if (!canAutoScan) return
 
         const detector = await createBarcodeDetector()
-        if (!detector || cancelled) return
+        if (cancelled) return
+        if (!detector) {
+          setError(
+            "Could not start the barcode reader. Type the code below, or reconnect to the internet once and try again."
+          )
+          return
+        }
 
         stopScanRef.current = scanVideoForBarcode(
           video,
@@ -120,7 +126,7 @@ export function SellBarcodeScannerDialog({ open, onClose, onScan }: Props) {
           <DialogDescription>
             {canAutoScan
               ? "Point the camera at the barcode. It should add the product automatically."
-              : "This browser cannot auto-scan from the camera. Use a Bluetooth/USB scanner in the search box, or type the code below."}
+              : "This device has no camera access. Use a Bluetooth/USB scanner in the search box, or type the code below."}
           </DialogDescription>
         </DialogHeader>
 

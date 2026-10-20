@@ -1,4 +1,4 @@
-const SW_VERSION = "v9"
+const SW_VERSION = "v10"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
 const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
@@ -162,6 +162,32 @@ function fetchWithTimeout(request, ms) {
   return next.finally(() => clearTimeout(timer))
 }
 
+/**
+ * Page loads: network first (with cookies) and keep a copy so a reload while
+ * offline — e.g. Android discarding the tab during printing — reopens the app.
+ */
+async function networkFirstPage(request, url) {
+  const cached = (await caches.match(request)) || (await caches.match(url.pathname))
+  const fallback = () => (cached ? cached : cachedAppShell(url.pathname))
+
+  if (!self.navigator.onLine) return fallback()
+
+  try {
+    const networkResponse = await fetchWithTimeout(request, cached ? 6000 : 30000)
+    // Navigations must not receive a followed redirect; let the browser redirect itself.
+    if (networkResponse.redirected) return Response.redirect(networkResponse.url, 302)
+    if (!isUnsafeToCache(request, networkResponse)) {
+      const cache = await caches.open(RUNTIME_CACHE)
+      await cacheResponse(cache, request, networkResponse)
+      return networkResponse
+    }
+    if (networkResponse.ok || !cached) return networkResponse
+    return cached
+  } catch {
+    return fallback()
+  }
+}
+
 function isImageRequest(request) {
   return request.destination === "image"
 }
@@ -199,9 +225,12 @@ self.addEventListener("fetch", (event) => {
   // API + mutations are handled in the app (IndexedDB) — never intercept.
   if (url.pathname.startsWith("/api/")) return
 
-  // Online document loads must hit the network with cookies. A cached login page
-  // was being served for /dashboard and bouncing people back to sign-in.
-  if (request.mode === "navigate" && self.navigator.onLine) return
+  // Login pages reached via redirect are never cached (see isUnsafeToCache), so a
+  // stale sign-in screen cannot be replayed for /dashboard.
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirstPage(request, url))
+    return
+  }
 
   const isRsc =
     request.headers.get("rsc") === "1" ||

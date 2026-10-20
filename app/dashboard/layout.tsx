@@ -17,6 +17,9 @@ import {
   isBrowserOffline,
   isDashboardOfflinePath,
 } from "@/lib/offline-navigation"
+import { getPosSettings } from "@/lib/pos-settings"
+
+const SELL_PATH = "/dashboard/sell"
 
 export default function DashboardLayout({
   children,
@@ -45,6 +48,29 @@ export default function DashboardLayout({
     portalTokenRef.current = readPortalTokenFromLocation()
   }
   const completePortalHandoff = useAuthStore((s) => s.completePortalHandoff)
+  const landingCheckedRef = useRef(false)
+  const [openingSell, setOpeningSell] = useState(false)
+
+  // Tills open on Sell. Only the first screen of each app start is redirected,
+  // so the Home tab still works afterwards.
+  useEffect(() => {
+    if (landingCheckedRef.current || !user || !pathname) return
+    landingCheckedRef.current = true
+    if (pathname === "/dashboard" && getPosSettings().openOnSell) {
+      setOpeningSell(true)
+      router.replace(SELL_PATH)
+    }
+  }, [user, pathname, router])
+
+  useEffect(() => {
+    if (!openingSell) return
+    if (pathname !== "/dashboard") {
+      setOpeningSell(false)
+      return
+    }
+    const timer = window.setTimeout(() => setOpeningSell(false), 4000)
+    return () => window.clearTimeout(timer)
+  }, [openingSell, pathname])
 
   const handleExpired = useCallback(() => {
     void logout("expired")
@@ -101,7 +127,7 @@ export default function DashboardLayout({
     }
   }, [user, isLoading, accountLocked, sessionExpired, router, isOffline, portalSigningIn, portalError])
 
-  if (portalSigningIn || (isLoading && !user)) {
+  if (portalSigningIn || (isLoading && !user) || openingSell) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
         <Loader2 className="size-5 animate-spin" aria-hidden />
