@@ -35,7 +35,12 @@ export function getStockStatus(
   quantity: number,
   threshold: number
 ): StockStatus {
-  if (quantity === 0) return "critical"
+  if (quantity <= 0) return "critical"
   if (quantity <= threshold) return "low"
   return "good"
+}
+
+/** "12 in stock", or "Oversold by 2" when more was sold than was recorded in stock. */
+export function formatStockLabel(quantity: number): string {
+  return quantity < 0 ? `Oversold by ${Math.abs(quantity)}` : `${quantity} in stock`
 }

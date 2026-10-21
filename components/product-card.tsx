@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Minus, Plus, Edit, Tag } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
 import { sendOrQueueMutation } from "@/lib/offline-sync"
+import { formatStockLabel } from "@/lib/db"
 
 interface Product {
   id: string
@@ -44,35 +45,42 @@ export function ProductCard({
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [localQuantity, setLocalQuantity] = useState(product.quantity)
 
+  // Follow stock changes from sync/other screens unless an adjustment is in flight.
+  useEffect(() => {
+    if (!isAdjusting) setLocalQuantity(product.quantity)
+  }, [product.quantity])
+
   const isLowStock = localQuantity <= product.low_stock_threshold && localQuantity > 0
-  const isOutOfStock = localQuantity === 0
+  const isOutOfStock = localQuantity <= 0
 
   const adjustStock = async (amount: number) => {
     if (isAdjusting) return
     
-    const newQty = Math.max(0, localQuantity + amount)
+    const newQty = localQuantity + amount
+    if (amount < 0 && newQty < 0) {
+      toast({ title: "Stock can't go below zero" })
+      return
+    }
     setLocalQuantity(newQty)
     setIsAdjusting(true)
 
     try {
-      const { queued, response, conflict } = await sendOrQueueMutation({
+      const { queued, response } = await sendOrQueueMutation({
         url: `/api/products/${product.id}/adjust`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: { adjustment: amount },
       })
 
-      if (conflict) {
-        setLocalQuantity(localQuantity)
-        toast({
-          title: "Stock conflict",
-          description: "Item was updated elsewhere. Refresh before adjusting again.",
-        })
-        return
-      }
-
       if (!queued && response && !response.ok) {
         setLocalQuantity(localQuantity)
+        const data = await response.json().catch(() => null)
+        toast({
+          title: "Stock not changed",
+          description:
+            typeof data?.error === "string" ? data.error : "Refresh Products and try again.",
+          variant: "destructive",
+        })
         return
       }
 
@@ -113,7 +121,7 @@ export function ProductCard({
                   !isOutOfStock && !isLowStock && "bg-primary"
                 )}
               >
-                {localQuantity} in stock
+                {formatStockLabel(localQuantity)}
               </Badge>
               <span className="text-sm text-muted-foreground">
                 {formatPrice(product.unit_price)} each

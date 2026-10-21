@@ -112,8 +112,12 @@ export function useAuth() {
     [logoutStore, mutate, router]
   )
 
+  /** Session ran out while offline: keep selling; sign-in is enforced once back online. */
+  const offlineGrace = sessionExpired && isOffline && Boolean(storeUser)
+
   const user = useMemo(() => {
     if (accountLocked) return null
+    if (offlineGrace) return storeUser as User
     if (sessionExpired) return null
     if (data?.user) return data.user
     if (
@@ -123,11 +127,11 @@ export function useAuth() {
     ) {
       return storeUser as User
     }
-    if (isOffline && storeUser && !sessionExpired) {
+    if (isOffline && storeUser) {
       return storeUser as User
     }
     return null
-  }, [data?.user, accountLocked, sessionExpired, storeUser, storeExpiresAt, isOffline])
+  }, [data?.user, accountLocked, sessionExpired, offlineGrace, storeUser, storeExpiresAt, isOffline])
 
   const isLoading = useMemo(() => {
     if (accountLocked) return false
@@ -143,6 +147,7 @@ export function useAuth() {
     user,
     accountLocked,
     sessionExpired,
+    offlineGrace,
     sessionExpiresAt,
     isLoading,
     isError: error,

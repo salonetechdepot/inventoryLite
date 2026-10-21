@@ -51,9 +51,10 @@ export async function loadDashboardStatsForTenant(tenantId: string) {
   const lowStockCount = products.filter(
     (p) => (p.quantity ?? 0) <= (p.lowStockThreshold ?? 0)
   ).length
-  const outOfStockCount = products.filter((p) => (p.quantity ?? 0) === 0).length
+  const outOfStockCount = products.filter((p) => (p.quantity ?? 0) <= 0).length
+  // Oversold items (negative stock) add nothing to stock value.
   const inventoryValue = products.reduce(
-    (sum, p) => sum + (p.quantity ?? 0) * Number(p.price ?? 0),
+    (sum, p) => sum + Math.max(0, p.quantity ?? 0) * Number(p.price ?? 0),
     0
   )
   const todaySalesCount = todaySales.length

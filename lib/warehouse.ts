@@ -75,29 +75,38 @@ export async function setProductStock(
   })
 }
 
+/**
+ * Apply a stock change. Returns the new quantity, or null when a decrease would take
+ * stock below zero. Increases are always allowed, so restocking an oversold item works.
+ */
 export async function adjustProductStock(
   tenantId: string,
   productId: string,
   delta: number,
   tx: Tx
-): Promise<number> {
+): Promise<number | null> {
   const warehouse = await ensureDefaultWarehouse(tenantId, tx)
   const current = await getStockQuantity(tenantId, productId, warehouse.id, tx)
   const next = current + delta
-  if (next < 0) return -1
+  if (delta < 0 && next < 0) return null
   await setProductStock(tenantId, productId, warehouse.id, next, tx)
   return next
 }
 
-export async function decrementProductStockIfEnough(
+/**
+ * Record goods leaving with a sale. Stock may go below zero: the cashier confirms
+ * overselling on Sell, and offline sales from several tills must never be rejected
+ * after the customer has paid. Negative stock shows as out of stock until restocked.
+ */
+export async function decrementProductStockForSale(
   tenantId: string,
   productId: string,
   amount: number,
   tx: Tx
-): Promise<boolean> {
+): Promise<number> {
   const warehouse = await ensureDefaultWarehouse(tenantId, tx)
   const current = await getStockQuantity(tenantId, productId, warehouse.id, tx)
-  if (current < amount) return false
-  await setProductStock(tenantId, productId, warehouse.id, current - amount, tx)
-  return true
+  const next = current - amount
+  await setProductStock(tenantId, productId, warehouse.id, next, tx)
+  return next
 }

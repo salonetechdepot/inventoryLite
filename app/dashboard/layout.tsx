@@ -30,6 +30,7 @@ export default function DashboardLayout({
     user,
     isLoading,
     sessionExpired,
+    offlineGrace,
     sessionExpiresAt,
     logout,
     accountLocked,
@@ -165,9 +166,16 @@ export default function DashboardLayout({
         sessionExpiresAt={sessionExpiresAt}
         sessionExpired={sessionExpired}
         onExpired={handleExpired}
+        paused={isOffline}
       />
+      {offlineGrace ? (
+        <div className="mx-4 mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning-foreground">
+          Your sign-in has expired. Keep selling offline — you&apos;ll be asked to sign in
+          when the connection is back, then your sales will be sent.
+        </div>
+      ) : null}
       <ThemeSync />
-      <OfflineSync />
+      <OfflineSync onSignInRequired={handleExpired} />
       <BackgroundCacheRefresh />
       <PwaInstallPrompt />
       {isOffline && pathname && !isDashboardOfflinePath(pathname) ? (

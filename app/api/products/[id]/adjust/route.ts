@@ -6,9 +6,23 @@ import { parseJsonBody, quantitySchema, validateEntityRouteId } from '@/lib/api-
 import { adjustProductStock } from '@/lib/warehouse'
 import { z } from 'zod'
 
-const stockAdjustSchema = z.object({
-  delta: z.coerce.number().int().min(-1_000_000_000).max(1_000_000_000).refine((n) => n !== 0),
-})
+const stockChangeSchema = z.coerce
+  .number()
+  .int()
+  .min(-1_000_000_000)
+  .max(1_000_000_000)
+  .refine((n) => n !== 0)
+
+/** Clients send `adjustment`; `delta` is accepted for older callers. */
+const stockAdjustSchema = z
+  .object({
+    adjustment: stockChangeSchema.optional(),
+    delta: stockChangeSchema.optional(),
+  })
+  .refine((body) => body.adjustment !== undefined || body.delta !== undefined, {
+    message: 'adjustment is required',
+  })
+  .transform((body) => ({ delta: (body.adjustment ?? body.delta) as number }))
 
 export async function POST(
   request: Request,
@@ -36,12 +50,12 @@ export async function POST(
 
     const result = await prisma.$transaction(async (tx) => {
       const next = await adjustProductStock(session.tenantId, id, parsed.data.delta, tx)
-      if (next < 0) return { ok: false as const }
+      if (next === null) return { ok: false as const }
       return { ok: true as const }
     })
 
     if (!result.ok) {
-      return NextResponse.json({ error: 'Stock cannot go below zero' }, { status: 400 })
+      return NextResponse.json({ error: 'Stock cannot go below zero' }, { status: 422 })
     }
 
     const product = await prisma.product.findFirstOrThrow({

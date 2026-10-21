@@ -446,7 +446,10 @@ function ReceiptDetailsDialog({
         if (!value) onClose()
       }}
     >
-      <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
+      <DialogContent
+        aria-describedby={undefined}
+        className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible"
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>Receipt details</DialogTitle>
         </DialogHeader>

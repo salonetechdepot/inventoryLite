@@ -89,6 +89,7 @@ import type { ScanSource } from "@/lib/hardware-scanner"
 import { ToastAction } from "@/components/ui/toast"
 import { useWakeLock } from "@/hooks/use-wake-lock"
 import { PosSettingsPanel } from "@/components/pos-settings-panel"
+import { formatStockLabel } from "@/lib/db"
 
 const fetcher = fetchWithOfflineCache
 
@@ -689,6 +690,7 @@ function SellPageContent() {
       })
       const { queued, response } = result
       const serverError = "serverError" in result ? result.serverError : undefined
+      const needsSignIn = "needsSignIn" in result && result.needsSignIn
 
       if (!queued && !response?.ok) {
         const data = await response?.json().catch(() => null)
@@ -698,7 +700,7 @@ function SellPageContent() {
             : `Checkout failed (${response?.status ?? "no response"}).`
         setError(
           "conflict" in result && result.conflict
-            ? `${reason} Check stock on Products, then try again.`
+            ? `${reason} Refresh Products, then try again.`
             : reason
         )
         void mutate()
@@ -816,16 +818,21 @@ function SellPageContent() {
       window.scrollTo({ top: 0 })
       void mutate(undefined, { revalidate: navigator.onLine })
 
-      if (queued && serverError) {
+      if (queued && needsSignIn) {
+        toast({
+          title: "Sale saved on this device",
+          description: "Your sign-in has expired. Sign in again to send it — nothing is lost.",
+        })
+      } else if (queued && serverError) {
         toast({
           title: "Sale saved — server did not accept it yet",
-          description: `${serverError} It will retry; if it keeps failing, open Sync conflicts.`,
+          description: `${serverError} It will retry automatically; if it keeps failing, open Sync conflicts.`,
           variant: "destructive",
         })
       } else if (queued) {
         toast({
-          title: "Checkout saved offline",
-          description: "This transaction will sync automatically when online.",
+          title: "Sale saved offline",
+          description: "It will be sent automatically when the connection is back.",
         })
       }
     } catch {
@@ -949,7 +956,7 @@ function SellPageContent() {
     return (
       <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-muted-foreground">
         <span className={cn(outOfStock && !isReturn && "text-destructive")}>
-          {remaining} in stock
+          {formatStockLabel(remaining)}
         </span>
         {!isReturn && outOfStock && (
           <Badge variant="destructive" className="h-5 text-[10px]">
@@ -1715,7 +1722,10 @@ function SellPageContent() {
 
       {/* Receipt Dialog */}
       <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
-        <DialogContent className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible">
+        <DialogContent
+          aria-describedby={undefined}
+          className="receipt-print-dialog sm:max-w-md max-h-[90vh] overflow-y-auto print:shadow-none print:max-w-none print:max-h-none print:overflow-visible"
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>Receipt</DialogTitle>
           </DialogHeader>
@@ -1752,11 +1762,13 @@ function SellPageContent() {
                   <span className="font-semibold text-foreground">
                     {oversellProduct.name}
                   </span>{" "}
-                  only has{" "}
+                  {oversellProduct.quantity < 0 ? "is already" : "only has"}{" "}
                   <span className="font-semibold text-destructive">
-                    {oversellProduct.quantity}
-                  </span>{" "}
-                  in stock. How many do you want to sell?
+                    {oversellProduct.quantity < 0
+                      ? `oversold by ${Math.abs(oversellProduct.quantity)}`
+                      : `${oversellProduct.quantity} in stock`}
+                  </span>
+                  . How many do you want to sell?
                 </>
               )}
             </DialogDescription>

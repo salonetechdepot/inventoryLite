@@ -4,11 +4,12 @@ import { useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { Download, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { useLabelShowPrice } from "@/hooks/use-label-show-price"
+import { LabelSettingsControls } from "@/components/label-settings-controls"
+import { useLabelSettings } from "@/hooks/use-label-settings"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -46,7 +47,8 @@ type Props = {
 export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
   const previewRef = useRef<HTMLDivElement>(null)
   const [printing, setPrinting] = useState(false)
-  const { showPrice, setShowPrice } = useLabelShowPrice()
+  const { settings: labelSettings, size: labelSize, update: updateLabelSettings } =
+    useLabelSettings()
   const [downloading, setDownloading] = useState(false)
 
   if (!product?.scan_code?.trim()) return null
@@ -91,27 +93,22 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Print product label</DialogTitle>
+          <DialogDescription>{product.name}</DialogDescription>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground -mt-2">{product.name}</p>
 
-        <label className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={showPrice}
-            onCheckedChange={(checked) => setShowPrice(checked === true)}
-          />
-          Show price on label
-        </label>
+        <LabelSettingsControls settings={labelSettings} update={updateLabelSettings} />
 
-        <div ref={previewRef}>
+        <div ref={previewRef} className="rounded-lg bg-muted/40 p-4">
           <ProductLabelPreview
             scanCode={scanCode}
+            size={labelSize}
             productName={product.name}
             categoryName={product.category_name ?? undefined}
             unitPrice={product.unit_price}
-            showPrice={showPrice}
+            showPrice={labelSettings.showPrice}
           />
         </div>
 

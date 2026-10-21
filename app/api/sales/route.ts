@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import { resolveCheckoutPayment } from '@/lib/checkout-payment'
-import { decrementProductStockIfEnough } from '@/lib/warehouse'
+import { decrementProductStockForSale } from '@/lib/warehouse'
 
 // GET all sales for current user
 export async function GET(request: Request) {
@@ -87,12 +87,6 @@ export async function POST(request: Request) {
     const unitPrice = Number(product.price ?? 0)
     const productName = product.name
 
-    if (currentStock < quantity) {
-      return NextResponse.json({ 
-        error: `Not enough stock. Only ${currentStock} available.` 
-      }, { status: 400 })
-    }
-
     const totalAmount = quantity * unitPrice
     const safeDiscount = Math.max(0, Number(discountAmount || 0))
     const netAmount = Math.max(0, totalAmount - safeDiscount)
@@ -123,15 +117,7 @@ export async function POST(request: Request) {
 
   // Record sale
     const saleResult = await prisma.$transaction(async (tx) => {
-      const ok = await decrementProductStockIfEnough(
-        session.tenantId,
-        productId,
-        quantity,
-        tx
-      )
-      if (!ok) {
-        throw new Error('INSUFFICIENT_STOCK')
-      }
+      await decrementProductStockForSale(session.tenantId, productId, quantity, tx)
       return tx.sale.create({
         data: {
           tenantId: session.tenantId,
@@ -163,9 +149,6 @@ export async function POST(request: Request) {
       newStock: currentStock - quantity
     })
   } catch (error) {
-    if (error instanceof Error && error.message === 'INSUFFICIENT_STOCK') {
-      return NextResponse.json({ error: 'Not enough stock.' }, { status: 409 })
-    }
     console.error('Record sale error:', error)
     return NextResponse.json({ error: 'Failed to record sale' }, { status: 500 })
   }

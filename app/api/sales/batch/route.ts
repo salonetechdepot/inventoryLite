@@ -11,7 +11,7 @@ import {
   entityIdSchema,
   uuidSchema,
 } from '@/lib/api-validation'
-import { decrementProductStockIfEnough, adjustProductStock } from '@/lib/warehouse'
+import { decrementProductStockForSale, adjustProductStock } from '@/lib/warehouse'
 import {
   isReturnCondition,
   isReturnDisposition,
@@ -263,16 +263,15 @@ export async function POST(request: Request) {
               restockQty,
               tx
             )
-            if (next < 0) throw new InsufficientStockError(product.name)
+            if (next === null) throw new InsufficientStockError(product.name)
           }
         } else {
-          const ok = await decrementProductStockIfEnough(
+          await decrementProductStockForSale(
             session.tenantId,
             item.productId,
             item.quantity,
             tx
           )
-          if (!ok) throw new InsufficientStockError(product.name)
         }
       }
 

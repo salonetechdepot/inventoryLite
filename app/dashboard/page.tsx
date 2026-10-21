@@ -28,6 +28,7 @@ import {
   getCacheUpdatedAt,
 } from "@/lib/offline-sync"
 import { sumOutstanding } from "@/lib/debtors"
+import { formatStockLabel } from "@/lib/db"
 
 const fetcher = fetchWithOfflineCache
 
@@ -205,8 +206,10 @@ export default function DashboardPage() {
               {lowStockProducts.slice(0, 3).map((product) => (
                 <div key={product.id} className="flex items-center justify-between">
                   <span className="text-sm font-medium truncate">{product.name}</span>
-                  <Badge variant={product.quantity === 0 ? "destructive" : "secondary"}>
-                    {product.quantity} left
+                  <Badge variant={product.quantity <= 0 ? "destructive" : "secondary"}>
+                    {product.quantity < 0
+                      ? formatStockLabel(product.quantity)
+                      : `${product.quantity} left`}
                   </Badge>
                 </div>
               ))}

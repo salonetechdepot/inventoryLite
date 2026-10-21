@@ -210,8 +210,11 @@ export const useAuthStore = create<AuthState>()(
           Boolean(state?.user) &&
           hasSessionExpiry(expiresAt) &&
           !isSessionExpired(expiresAt)
+        // Offline grace: an expired till keeps selling offline; sign-in is enforced once online.
+        const offlineGrace =
+          Boolean(state?.user) && typeof navigator !== "undefined" && !navigator.onLine
         useAuthStore.setState({
-          ...(valid
+          ...(valid || offlineGrace
             ? {}
             : {
                 user: null,

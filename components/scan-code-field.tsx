@@ -5,8 +5,8 @@ import dynamic from "next/dynamic"
 import { Download, Printer, ScanLine, Sparkles } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { useLabelShowPrice } from "@/hooks/use-label-show-price"
+import { LabelSettingsControls } from "@/components/label-settings-controls"
+import { useLabelSettings } from "@/hooks/use-label-settings"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { toast } from "@/hooks/use-toast"
 import { SellBarcodeScannerDialog } from "@/components/sell-barcode-scanner-dialog"
@@ -54,7 +54,8 @@ export function ScanCodeField({
 }: Props) {
   const previewRef = useRef<HTMLDivElement>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
-  const { showPrice, setShowPrice } = useLabelShowPrice()
+  const { settings: labelSettings, size: labelSize, update: updateLabelSettings } =
+    useLabelSettings()
   const [printing, setPrinting] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
@@ -196,21 +197,19 @@ export function ScanCodeField({
 
       {showPreview && (
         <div className="mt-3 space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={showPrice}
-              onCheckedChange={(checked) => setShowPrice(checked === true)}
-            />
-            Show price on label
-          </label>
+          <LabelSettingsControls settings={labelSettings} update={updateLabelSettings} />
 
-          <div ref={previewRef} className={cn(printing && "print:block")}>
+          <div
+            ref={previewRef}
+            className={cn("rounded-lg bg-muted/40 p-4", printing && "print:block")}
+          >
             <ProductLabelPreview
               scanCode={trimmed}
+              size={labelSize}
               productName={productName}
               categoryName={categoryName}
               unitPrice={unitPrice}
-              showPrice={showPrice}
+              showPrice={labelSettings.showPrice}
             />
           </div>
 

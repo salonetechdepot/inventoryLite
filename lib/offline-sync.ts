@@ -74,6 +74,7 @@ export const OFFLINE_DATA_CACHE_KEYS = [
 export const OFFLINE_BACKGROUND_REFRESH_MS = 180_000
 
 export const SYNC_CURSOR_CACHE_KEY = "__sync_cursor__"
+const SYNC_ID_MAP_CACHE_KEY = "__sync_id_map__"
 
 const SESSION_LOCAL_KEY = "biva-session-user-v1"
 
@@ -196,6 +197,8 @@ export interface QueuedMutation {
   createdAt: number
   retryCount: number
   tempId?: string
+  /** Shop that made the change; only that shop's session may send it. */
+  tenantId?: string | null
 }
 
 export interface SyncConflict {
@@ -207,6 +210,7 @@ export interface SyncConflict {
   reason: string
   payload?: unknown
   createdAt: number
+  tenantId?: string | null
 }
 
 interface CachedRecord {
@@ -299,13 +303,6 @@ async function deleteFromStore(storeName: string, id: string) {
   const db = await openDb()
   const tx = db.transaction(storeName, "readwrite")
   tx.objectStore(storeName).delete(id)
-  await txDone(tx)
-}
-
-async function clearStore(storeName: string) {
-  const db = await openDb()
-  const tx = db.transaction(storeName, "readwrite")
-  tx.objectStore(storeName).clear()
   await txDone(tx)
 }
 
@@ -501,9 +498,9 @@ async function bumpDashboardStatsAfterSale(amountPaid: number, itemsSold: number
   const lowStockCount = products.filter(
     (p) => (p.quantity ?? 0) <= (p.low_stock_threshold ?? 0)
   ).length
-  const outOfStockCount = products.filter((p) => (p.quantity ?? 0) === 0).length
+  const outOfStockCount = products.filter((p) => (p.quantity ?? 0) <= 0).length
   const inventoryValue = products.reduce(
-    (sum, p) => sum + (p.quantity ?? 0) * Number(p.unit_price ?? 0),
+    (sum, p) => sum + Math.max(0, p.quantity ?? 0) * Number(p.unit_price ?? 0),
     0
   )
 
@@ -912,13 +909,14 @@ async function applyOptimisticProductMutation(input: {
 
   const adjustId = parseAdjustProductIdFromUrl(input.url)
   if (adjustId && input.method === "POST") {
-    const adjustment = Number(payload.adjustment ?? 0)
+    const adjustment = Number(payload.adjustment ?? payload.delta ?? 0)
     await withProductsCache((products) =>
-      products.map((product) =>
-        product.id === adjustId
-          ? { ...product, quantity: Math.max(0, Number(product.quantity ?? 0) + adjustment) }
-          : product
-      )
+      products.map((product) => {
+        if (product.id !== adjustId) return product
+        const next = Number(product.quantity ?? 0) + adjustment
+        // Same rule as the server: decreases may not go below zero, restocks always apply.
+        return adjustment < 0 && next < 0 ? product : { ...product, quantity: next }
+      })
     )
     return {}
   }
@@ -1211,26 +1209,70 @@ async function getQueue() {
   return queue.sort((a, b) => a.createdAt - b.createdAt)
 }
 
+/** Persisted sign-in (stores/auth-store.ts) — updated the moment login completes. */
+const AUTH_STORE_LOCAL_KEY = "biva-auth-v1"
+
+function tenantIdFromAuthStore(): string | null {
+  try {
+    const raw = localStorage.getItem(AUTH_STORE_LOCAL_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { state?: { user?: unknown } }
+    return tenantIdFromSessionUser(parsed.state?.user)
+  } catch {
+    return null
+  }
+}
+
+/** Tenant of the signed-in shop on this device (null when signed out). */
+async function currentTenantId(): Promise<string | null> {
+  if (!isBrowser()) return null
+  const fromStore = tenantIdFromAuthStore()
+  if (fromStore) return fromStore
+  const cached = await getCachedData<SessionBackup>(SESSION_CACHE_KEY)
+  return (
+    tenantIdFromSessionUser(cached?.user) ??
+    tenantIdFromSessionUser(loadSessionBackup()?.user)
+  )
+}
+
+/** Changes queued before tenant tagging existed belong to whoever is signed in. */
+function belongsToTenant(mutation: QueuedMutation, tenantId: string | null) {
+  return Boolean(tenantId) && (!mutation.tenantId || mutation.tenantId === tenantId)
+}
+
+/** Waiting changes for the signed-in shop. */
 export async function getQueuedMutationCount() {
+  const [queue, tenantId] = await Promise.all([getQueue(), currentTenantId()])
+  return queue.filter((mutation) => belongsToTenant(mutation, tenantId)).length
+}
+
+/** All waiting changes on this device, including other accounts' (shown on the login screen). */
+export async function getDeviceQueuedMutationCount() {
   const queue = await getQueue()
   return queue.length
 }
 
 export async function getConflictCount() {
-  if (!isBrowser()) return 0
-  const conflicts = await getAllFromStore<SyncConflict>(CONFLICT_STORE)
+  const conflicts = await listConflicts()
   return conflicts.length
 }
 
+/** Conflicts for the signed-in shop, newest first. */
 export async function listConflicts() {
   if (!isBrowser()) return [] as SyncConflict[]
-  const conflicts = await getAllFromStore<SyncConflict>(CONFLICT_STORE)
-  return conflicts.sort((a, b) => b.createdAt - a.createdAt)
+  const [conflicts, tenantId] = await Promise.all([
+    getAllFromStore<SyncConflict>(CONFLICT_STORE),
+    currentTenantId(),
+  ])
+  return conflicts
+    .filter((conflict) => !conflict.tenantId || conflict.tenantId === tenantId)
+    .sort((a, b) => b.createdAt - a.createdAt)
 }
 
 export async function clearConflicts() {
   if (!isBrowser()) return
-  await clearStore(CONFLICT_STORE)
+  const conflicts = await listConflicts()
+  await Promise.all(conflicts.map((conflict) => deleteFromStore(CONFLICT_STORE, conflict.id)))
 }
 
 export async function dismissConflict(id: string) {
@@ -1332,13 +1374,17 @@ export async function retrySyncConflict(
   return result
 }
 
-async function enqueueMutation(mutation: Omit<QueuedMutation, "id" | "createdAt" | "retryCount">) {
+async function enqueueMutation(
+  mutation: Omit<QueuedMutation, "id" | "createdAt" | "retryCount" | "tenantId">
+) {
   await putIntoStore(QUEUE_STORE, {
     ...mutation,
     id: crypto.randomUUID(),
     createdAt: Date.now(),
     retryCount: 0,
+    tenantId: await currentTenantId(),
   } satisfies QueuedMutation)
+  window.dispatchEvent(new CustomEvent(OFFLINE_QUEUE_CHANGED_EVENT))
 }
 
 async function markConflict(mutation: QueuedMutation, status: number, reason: string) {
@@ -1351,6 +1397,7 @@ async function markConflict(mutation: QueuedMutation, status: number, reason: st
     reason,
     payload: mutation.body,
     createdAt: Date.now(),
+    tenantId: mutation.tenantId ?? (await currentTenantId()),
   }
   await putIntoStore(CONFLICT_STORE, conflict)
 }
@@ -1363,10 +1410,47 @@ function shouldTreatAsSuccess(mutation: QueuedMutation, status: number) {
   return mutation.method === "DELETE" && status === 404
 }
 
-/** Client/validation errors won't succeed on retry — surface immediately. */
+/**
+ * Client/validation errors won't succeed on retry — surface immediately.
+ * 401 is not here: an expired sign-in keeps changes queued until the shop signs in again.
+ */
 function isPermanentSyncFailure(status: number) {
-  return status === 400 || status === 401 || status === 403 || status === 404
+  return status === 400 || status === 403 || status === 404
 }
+
+/** Network or server temporarily unavailable — keep the change and retry later. */
+function isTransientStatus(status: number) {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  )
+}
+
+/**
+ * Real API answers are JSON. A 200 HTML page is a captive portal or mobile-data
+ * "buy a bundle" page — the server never saw the change.
+ */
+function isJsonApiResponse(response: Response) {
+  return (response.headers.get("content-type") ?? "").includes("application/json")
+}
+
+async function isTenantLockedResponse(response: Response) {
+  if (response.status !== 403) return false
+  try {
+    const data = (await response.clone().json()) as { code?: string }
+    return data.code === "TENANT_LOCKED"
+  } catch {
+    return false
+  }
+}
+
+const NETWORK_SYNC_ERROR = "Connection problem while syncing. Waiting changes are kept and will retry."
+const SIGN_IN_SYNC_ERROR = "Your sign-in has expired. Sign in again to send waiting changes."
+const LOCKED_SYNC_ERROR = "Account locked. Waiting changes are kept until it is unlocked."
 
 async function readApiError(response: Response): Promise<string> {
   try {
@@ -1378,6 +1462,8 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 export const OFFLINE_SYNC_COMPLETE_EVENT = "biva-offline-sync-complete"
+/** Fired when a change is added to the waiting queue. */
+export const OFFLINE_QUEUE_CHANGED_EVENT = "biva-offline-queue-changed"
 export const OFFLINE_CACHE_REFRESHED_EVENT = "biva-offline-cache-refreshed"
 
 export type OfflineCacheRefreshResult = {
@@ -1406,6 +1492,31 @@ async function loadSyncCursor(tenantId: string): Promise<SyncCursorState | null>
 
 async function saveSyncCursor(state: SyncCursorState) {
   await cacheData(SYNC_CURSOR_CACHE_KEY, state)
+}
+
+/** Shop data cached for offline use; the session entry and the sync queue are kept. */
+const TENANT_DATA_CACHE_KEYS = [
+  PRODUCTS_CACHE_KEY,
+  CATEGORIES_CACHE_KEY,
+  DASHBOARD_STATS_CACHE_KEY,
+  SALE_RECEIPTS_CACHE_KEY,
+  RETURN_RECEIPTS_CACHE_KEY,
+  ANALYTICS_CACHE_KEY,
+  SYNC_CURSOR_CACHE_KEY,
+]
+
+/**
+ * A different shop signed in on this device: drop the previous shop's cached
+ * products, history and reports so they never mix. Waiting changes stay queued
+ * (tagged with their shop) and sync when that shop signs in again.
+ */
+async function resetCacheIfTenantChanged(tenantId: string) {
+  const state = await getCachedData<SyncCursorState>(SYNC_CURSOR_CACHE_KEY)
+  if (!state?.tenantId || state.tenantId === tenantId) return
+  await Promise.all(TENANT_DATA_CACHE_KEYS.map((key) => deleteFromStore(CACHE_STORE, key)))
+  await Promise.all(
+    TENANT_DATA_CACHE_KEYS.map((key) => mutate(key, undefined, { revalidate: false }))
+  )
 }
 
 function tenantIdFromSessionUser(user: unknown): string | null {
@@ -1483,6 +1594,7 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
       return { ...empty, reason: "no_session" }
     }
 
+    await resetCacheIfTenantChanged(tenantId)
     const cursorState = await loadSyncCursor(tenantId)
     const forceFull = options?.full === true
     const syncUrl =
@@ -1738,11 +1850,21 @@ export async function sendOrQueueMutation(input: {
       FETCH_DEADLINE_MS
     )
 
+    if (
+      isOfflineGatewayResponse(response) ||
+      isTransientStatus(response.status) ||
+      (response.ok && !isJsonApiResponse(response))
+    ) {
+      await enqueueMutation({ ...input, tempId: optimistic.tempId })
+      return { queued: true as const, response: null }
+    }
+
+    if (response.status === 401) {
+      await enqueueMutation({ ...input, tempId: optimistic.tempId })
+      return { queued: true as const, response: null, needsSignIn: true as const }
+    }
+
     if (!response.ok) {
-      if (isOfflineGatewayResponse(response)) {
-        await enqueueMutation({ ...input, tempId: optimistic.tempId })
-        return { queued: true as const, response: null }
-      }
       // Server fault, not the cashier's input: keep the sale and retry it rather than
       // dropping it. After repeated failures it lands on the Sync conflicts page.
       if (response.status >= 500) {
@@ -1824,24 +1946,56 @@ export type SyncQueueResult = {
   failed: number
   conflicts: number
   lastError?: string
+  /** Why sending stopped early; waiting changes are kept. */
+  blockedBy?: "network" | "sign_in" | "locked" | "server"
 }
 
-export async function processOfflineQueue(): Promise<SyncQueueResult> {
-  const queue = await getQueue()
-  if (queue.length === 0) return { synced: 0, failed: 0, conflicts: 0 }
+let activeQueueRun: Promise<SyncQueueResult> | null = null
+
+/** Send waiting changes in order. Concurrent callers share one run. */
+export function processOfflineQueue(): Promise<SyncQueueResult> {
+  if (!isBrowser()) return Promise.resolve({ synced: 0, failed: 0, conflicts: 0 })
+  if (activeQueueRun) return activeQueueRun
+  activeQueueRun = runOfflineQueue().finally(() => {
+    activeQueueRun = null
+  })
+  return activeQueueRun
+}
+
+async function runOfflineQueue(): Promise<SyncQueueResult> {
+  const tenantId = await currentTenantId()
+  const allQueued = await getQueue()
+  if (allQueued.length === 0) return { synced: 0, failed: 0, conflicts: 0 }
+  if (!tenantId) {
+    return {
+      synced: 0,
+      failed: 0,
+      conflicts: 0,
+      lastError: SIGN_IN_SYNC_ERROR,
+      blockedBy: "sign_in",
+    }
+  }
+
+  // Another shop's changes stay on the device until that shop signs in again.
+  const queue = allQueued.filter((mutation) => belongsToTenant(mutation, tenantId))
 
   let synced = 0
   let failed = 0
   let conflicts = 0
   let lastError: string | undefined
-  const tempIdMap: Record<string, string> = {}
+  let blockedBy: SyncQueueResult["blockedBy"]
+  // Local→server ids survive between runs: a sale may sync now and its later
+  // offline payment on the next run.
+  const tempIdMap: Record<string, string> =
+    (await getCachedData<Record<string, string>>(SYNC_ID_MAP_CACHE_KEY)) ?? {}
 
   for (const mutation of queue) {
     const mappedUrl = remapIdInUrl(mutation.url, tempIdMap)
     const mappedBody = remapIdsInBody(mutation.body, tempIdMap)
 
+    let res: Response
     try {
-      const res = await fetchWithDeadline(
+      res = await fetchWithDeadline(
         mappedUrl,
         {
           method: mutation.method,
@@ -1851,64 +2005,93 @@ export async function processOfflineQueue(): Promise<SyncQueueResult> {
         },
         FETCH_DEADLINE_MS
       )
-
-      if (res.ok || shouldTreatAsSuccess(mutation, res.status)) {
-        await deleteFromStore(QUEUE_STORE, mutation.id)
-        const receiptMap = await applyBatchReceiptCacheResolution(mutation, res)
-        if (receiptMap) Object.assign(tempIdMap, receiptMap)
-        await applyPaymentCacheResolution(
-          { ...mutation, url: mappedUrl },
-          res
-        )
-        await applyDayCloseCacheResolution({ ...mutation, url: mappedUrl }, res)
-        const createdMap = await applyCreateSyncResolution(mutation, res)
-        if (createdMap) Object.assign(tempIdMap, createdMap)
-        synced += 1
-      } else if (isStaleProductMutation({ ...mutation, url: mappedUrl }, res.status)) {
-        await deleteFromStore(QUEUE_STORE, mutation.id)
-        await runDeltaSync()
-      } else if (isConflictStatus(res.status) || isPermanentSyncFailure(res.status)) {
-        const reason = await readApiError(res)
-        lastError = reason
-        await markConflict(mutation, res.status, reason)
-        await deleteFromStore(QUEUE_STORE, mutation.id)
-        conflicts += 1
-      } else {
-        failed += 1
-        lastError = await readApiError(res)
-        if (mutation.retryCount + 1 >= MAX_RETRY_COUNT) {
-          await markConflict(
-            mutation,
-            res.status,
-            lastError || `Giving up after ${MAX_RETRY_COUNT} retries.`
-          )
-          await deleteFromStore(QUEUE_STORE, mutation.id)
-          conflicts += 1
-        } else {
-          await putIntoStore(QUEUE_STORE, {
-            ...mutation,
-            retryCount: mutation.retryCount + 1,
-          } satisfies QueuedMutation)
-        }
-      }
     } catch {
+      // Offline or timed out: keep everything (no retry used) and stop so order is kept.
       failed += 1
-      lastError = "Network error while syncing. Try again."
-
-      if (mutation.retryCount + 1 >= MAX_RETRY_COUNT) {
-        await markConflict(mutation, 0, lastError)
-        await deleteFromStore(QUEUE_STORE, mutation.id)
-        conflicts += 1
-      } else {
-        await putIntoStore(QUEUE_STORE, {
-          ...mutation,
-          retryCount: mutation.retryCount + 1,
-        } satisfies QueuedMutation)
-      }
+      lastError = NETWORK_SYNC_ERROR
+      blockedBy = "network"
+      break
     }
+
+    if (
+      (res.ok && isJsonApiResponse(res)) ||
+      shouldTreatAsSuccess(mutation, res.status)
+    ) {
+      await deleteFromStore(QUEUE_STORE, mutation.id)
+      const receiptMap = await applyBatchReceiptCacheResolution(mutation, res)
+      if (receiptMap) Object.assign(tempIdMap, receiptMap)
+      await applyPaymentCacheResolution({ ...mutation, url: mappedUrl }, res)
+      await applyDayCloseCacheResolution({ ...mutation, url: mappedUrl }, res)
+      const createdMap = await applyCreateSyncResolution(mutation, res)
+      if (createdMap) Object.assign(tempIdMap, createdMap)
+      synced += 1
+      continue
+    }
+
+    if (res.status === 401) {
+      failed += 1
+      lastError = SIGN_IN_SYNC_ERROR
+      blockedBy = "sign_in"
+      break
+    }
+
+    if (await isTenantLockedResponse(res)) {
+      failed += 1
+      lastError = LOCKED_SYNC_ERROR
+      blockedBy = "locked"
+      break
+    }
+
+    if (res.ok || isTransientStatus(res.status) || isOfflineGatewayResponse(res)) {
+      failed += 1
+      lastError = NETWORK_SYNC_ERROR
+      blockedBy = "network"
+      break
+    }
+
+    if (isStaleProductMutation({ ...mutation, url: mappedUrl }, res.status)) {
+      await deleteFromStore(QUEUE_STORE, mutation.id)
+      await runDeltaSync()
+      continue
+    }
+
+    if (isConflictStatus(res.status) || isPermanentSyncFailure(res.status)) {
+      const reason = await readApiError(res)
+      lastError = reason
+      await markConflict(mutation, res.status, reason)
+      await deleteFromStore(QUEUE_STORE, mutation.id)
+      conflicts += 1
+      continue
+    }
+
+    // Unexpected server error: count the attempt; after several it needs a person to look.
+    failed += 1
+    lastError = await readApiError(res)
+    if (mutation.retryCount + 1 >= MAX_RETRY_COUNT) {
+      await markConflict(
+        mutation,
+        res.status,
+        lastError || `Giving up after ${MAX_RETRY_COUNT} attempts.`
+      )
+      await deleteFromStore(QUEUE_STORE, mutation.id)
+      conflicts += 1
+      continue
+    }
+    await putIntoStore(QUEUE_STORE, {
+      ...mutation,
+      retryCount: mutation.retryCount + 1,
+    } satisfies QueuedMutation)
+    blockedBy = "server"
+    break
   }
 
-  const result = { synced, failed, conflicts, lastError }
+  if ((await getQueue()).length === 0) {
+    await deleteFromStore(CACHE_STORE, SYNC_ID_MAP_CACHE_KEY)
+  } else {
+    await cacheData(SYNC_ID_MAP_CACHE_KEY, tempIdMap)
+  }
+
+  const result: SyncQueueResult = { synced, failed, conflicts, lastError, blockedBy }
   if (synced > 0) {
     notifySyncComplete(result)
     await runDeltaSync()

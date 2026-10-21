@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { AuthOtpFlow } from "@/components/auth-otp-flow"
 import { SessionExpiredNotice } from "@/components/session-expired-notice"
 import { LoginOfflineNotice } from "@/components/login-offline-notice"
+import { LoginPendingSyncNotice } from "@/components/login-pending-sync-notice"
 import { LoginSsoHandoff } from "@/components/login-sso-handoff"
 import { BivaLogo } from "@/components/biva-logo"
 import { APP_TAGLINE } from "@/lib/site"
@@ -40,6 +41,7 @@ export function LoginPageContent() {
           ) : null}
           <LoginOfflineNotice />
           <SessionExpiredNotice />
+          <LoginPendingSyncNotice />
           {!ssoBusy ? <AuthOtpFlow mode="login" /> : null}
         </CardContent>
       </Card>

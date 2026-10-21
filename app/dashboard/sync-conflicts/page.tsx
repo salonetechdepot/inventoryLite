@@ -53,8 +53,16 @@ export default function SyncConflictsPage() {
     if (result && "conflicts" in result && result.conflicts > 0) {
       toast({
         title: "Still blocked",
-        description: "Fix the issue (e.g. stock) and try again, or dismiss.",
+        description: result.lastError || "Fix the issue and try again, or use the server version.",
         variant: "destructive",
+      })
+      return
+    }
+    if (result && "synced" in result && result.synced === 0) {
+      toast({
+        title: "Waiting to send",
+        description:
+          result.lastError || "The change is back in the queue and will send automatically.",
       })
       return
     }
@@ -62,6 +70,10 @@ export default function SyncConflictsPage() {
   }
 
   const handleDismissAll = async () => {
+    const ok = window.confirm(
+      `Dismiss all ${conflicts.length} change(s)? They will not be sent to the server.`
+    )
+    if (!ok) return
     await clearConflicts()
     if (typeof navigator !== "undefined" && navigator.onLine) {
       await runDeltaSync()
@@ -103,16 +115,16 @@ export default function SyncConflictsPage() {
           <p className="font-medium text-foreground">What to do</p>
           <ul className="list-disc pl-5 space-y-1">
             <li>
-              <strong>Sale conflicts</strong> often mean stock ran out online — check
-              products and re-enter the sale if needed.
+              <strong>Sale conflicts</strong> are rare — usually a product that was deleted
+              on another device, or a return that no longer matches its original sale.
             </li>
             <li>
               <strong>Product conflicts</strong> may be a duplicate scan code or
               stale edit — refresh Products and try again.
             </li>
             <li>
-              <strong>Send my change</strong> re-sends what this device saved. Sales can fail
-              again if stock is still short — re-enter the sale on Sell in that case.
+              <strong>Send my change</strong> re-sends what this device saved. If it is
+              rejected again, fix the cause (e.g. restore the product) or use the server version.
             </li>
             <li>
               <strong>Use server</strong> drops the rejected change and refreshes products and
