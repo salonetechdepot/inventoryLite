@@ -10,10 +10,17 @@ export async function GET() {
     const session = sessionResult
 
     const categories = await prisma.category.findMany({
-      where: { tenantId: session.tenantId },
+      where: {
+        tenantId: session.tenantId,
+        OR: [{ productId: null }, { productId: "" }],
+      },
       orderBy: { name: 'asc' },
       include: {
         meta: true,
+        subCategories: {
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true },
+        },
         _count: { select: { products: true } },
       },
     })
@@ -25,6 +32,10 @@ export async function GET() {
         icon: category.meta?.icon ?? 'package',
         is_default: category.meta?.isDefault ?? false,
         product_count: category._count.products,
+        subcategories: category.subCategories.map((subcategory) => ({
+          id: subcategory.id,
+          name: subcategory.name,
+        })),
         created_at: category.createdAt,
       }))
       .sort((a, b) => {

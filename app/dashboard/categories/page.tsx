@@ -35,6 +35,7 @@ interface Category {
   icon: string | null
   is_default: boolean
   product_count: number
+  subcategories?: Array<{ id: string; name: string }>
 }
 
 export default function CategoriesPage() {
@@ -51,6 +52,9 @@ export default function CategoriesPage() {
   const [editName, setEditName] = useState("")
   const [editIcon, setEditIcon] = useState("package")
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleteSubId, setDeleteSubId] = useState<string | null>(null)
+  const [subName, setSubName] = useState("")
+  const [subParentId, setSubParentId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   const startEdit = (category: Category) => {
@@ -170,6 +174,71 @@ export default function CategoriesPage() {
     }
   }
 
+  const addSubcategory = async (categoryId: string, name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setSaving(true)
+    try {
+      const { queued, response } = await sendOrQueueMutation({
+        url: `/api/categories/${categoryId}/subcategories`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { name: trimmed },
+      })
+      if (queued) {
+        toast({ title: "Saved offline", description: "Subcategory will sync when you are back online." })
+        setSubName("")
+        await mutate()
+        return
+      }
+      if (!response?.ok) {
+        const data = await response?.json()
+        toast({
+          title: "Could not add subcategory",
+          description: data?.error || "Try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      setSubName("")
+      await mutate()
+      toast({ title: "Subcategory added" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmDeleteSubcategory = async () => {
+    if (!deleteSubId) return
+    setSaving(true)
+    try {
+      const { queued, response } = await sendOrQueueMutation({
+        url: `/api/subcategories/${deleteSubId}`,
+        method: "DELETE",
+      })
+      if (queued) {
+        toast({ title: "Queued offline", description: "Delete will sync when online." })
+        setDeleteSubId(null)
+        await mutate()
+        return
+      }
+      if (!response?.ok) {
+        const data = await response?.json()
+        toast({
+          title: "Could not delete",
+          description: data?.error || "Try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      setDeleteSubId(null)
+      await mutate()
+      toast({ title: "Subcategory deleted" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <main className="p-4 pb-24">
       <header className="mb-6">
@@ -182,7 +251,7 @@ export default function CategoriesPage() {
         </Link>
         <h1 className="text-2xl font-bold">Categories</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Organize products into groups when adding or editing items.
+          Build the tree here. A category such as Computers can have Mac and Windows under it.
         </p>
       </header>
 
@@ -195,11 +264,11 @@ export default function CategoriesPage() {
             <FieldGroup className="gap-3">
               <Field>
                 <FieldLabel htmlFor="newName">Name</FieldLabel>
-                <Input
+                  <Input
                   id="newName"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g. Beverages"
+                  placeholder="e.g. Computers"
                   className="h-11"
                 />
               </Field>
@@ -279,6 +348,7 @@ export default function CategoriesPage() {
                     </div>
                   </FieldGroup>
                 ) : (
+                  <>
                   <div className="flex items-center gap-3">
                     <div className="size-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
                       <FolderOpen className="size-5 text-muted-foreground" />
@@ -294,7 +364,10 @@ export default function CategoriesPage() {
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {category.product_count} product
-                        {category.product_count === 1 ? "" : "s"} · icon: {category.icon || "package"}
+                        {category.product_count === 1 ? "" : "s"}
+                        {(category.subcategories?.length ?? 0) > 0
+                          ? ` · ${category.subcategories?.length} subcategories`
+                          : ""}
                       </p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -319,6 +392,51 @@ export default function CategoriesPage() {
                       </Button>
                     </div>
                   </div>
+                  <div className="mt-4 space-y-2 border-t pt-3">
+                    {(category.subcategories ?? []).map((subcategory) => (
+                      <div key={subcategory.id} className="flex items-center justify-between gap-2 pl-2">
+                        <p className="text-sm">{subcategory.name}</p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive"
+                          onClick={() => setDeleteSubId(subcategory.id)}
+                          aria-label={`Delete ${subcategory.name}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    <form
+                      className="flex gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        const current = subParentId === category.id ? subName : ""
+                        void addSubcategory(category.id, current)
+                      }}
+                    >
+                      <Input
+                        value={subParentId === category.id ? subName : ""}
+                        onFocus={() => {
+                          if (subParentId !== category.id) {
+                            setSubParentId(category.id)
+                            setSubName("")
+                          }
+                        }}
+                        onChange={(event) => {
+                          setSubParentId(category.id)
+                          setSubName(event.target.value)
+                        }}
+                        placeholder="Add subcategory, e.g. Mac"
+                        className="h-10"
+                      />
+                      <Button type="submit" variant="outline" disabled={saving || !(subParentId === category.id && subName.trim())}>
+                        Add
+                      </Button>
+                    </form>
+                  </div>
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -337,6 +455,22 @@ export default function CategoriesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} disabled={saving}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={Boolean(deleteSubId)} onOpenChange={() => setDeleteSubId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete subcategory?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the subcategory. It stays if a product is still using it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteSubcategory} disabled={saving}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

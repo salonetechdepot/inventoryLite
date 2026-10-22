@@ -25,6 +25,7 @@ export type SyncCategory = {
   icon: string | null
   is_default: boolean
   product_count: number
+  subcategories?: Array<{ id: string; name: string }>
   created_at: string | Date | null
 }
 

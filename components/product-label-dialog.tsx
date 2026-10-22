@@ -4,7 +4,8 @@ import { useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { Download, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { LabelSettingsControls } from "@/components/label-settings-controls"
+import { LabelCopiesField, LabelSettingsControls } from "@/components/label-settings-controls"
+import { resolvePrintAdjust } from "@/lib/label-settings"
 import { useLabelSettings } from "@/hooks/use-label-settings"
 import {
   Dialog,
@@ -50,6 +51,7 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
   const { settings: labelSettings, size: labelSize, update: updateLabelSettings } =
     useLabelSettings()
   const [downloading, setDownloading] = useState(false)
+  const [copies, setCopies] = useState(1)
 
   if (!product?.scan_code?.trim()) return null
 
@@ -66,7 +68,10 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
     }
     setPrinting(true)
     try {
-      const ok = printLabelWithHint(previewRef.current)
+      const ok = printLabelWithHint(previewRef.current, {
+        copies,
+        adjust: resolvePrintAdjust(labelSettings),
+      })
       if (!ok) {
         toast({ title: "Nothing to print", variant: "destructive" })
       }
@@ -112,10 +117,12 @@ export function ProductLabelDialog({ product, open, onOpenChange }: Props) {
           />
         </div>
 
+        <LabelCopiesField value={copies} onChange={setCopies} />
+
         <div className="grid grid-cols-2 gap-2">
           <Button type="button" variant="secondary" disabled={printing} onClick={handlePrint}>
             <Printer className="size-4 mr-2" />
-            Print label
+            {copies > 1 ? `Print ${copies} labels` : "Print label"}
           </Button>
           <Button
             type="button"

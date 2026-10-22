@@ -15,6 +15,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { isValidScanCode } from '@/lib/scan-code'
 import { ensureDefaultWarehouse, setProductStock } from '@/lib/warehouse'
+import { assertProductCategoryChoice } from '@/lib/product-category-choice'
 
 const productPatchSchema = z.object({
   name: trimmedString(255).optional(),
@@ -35,6 +36,7 @@ const productPatchSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(50)).max(25).optional(),
   hasSpecifications: z.boolean().optional(),
   specifications: z.unknown().optional(),
+  subCategoryId: entityIdSchema.nullish(),
 })
 
 export async function GET(
@@ -94,6 +96,7 @@ export async function PATCH(
       tags,
       hasSpecifications,
       specifications,
+      subCategoryId,
     } = parsed.data
 
     const existingProduct = await prisma.product.findFirst({
@@ -104,13 +107,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    if (categoryId) {
-      const category = await prisma.category.findFirst({
-        where: { id: categoryId, tenantId: session.tenantId },
-        select: { id: true },
-      })
-      if (!category) {
-        return NextResponse.json({ error: 'Category not found' }, { status: 404 })
+    if (categoryId !== undefined || subCategoryId !== undefined) {
+      const categoryError = await assertProductCategoryChoice(
+        session.tenantId,
+        categoryId === undefined ? existingProduct.categoryId : categoryId,
+        subCategoryId === undefined ? existingProduct.subCategoryId : subCategoryId
+      )
+      if (categoryError) {
+        return NextResponse.json({ error: categoryError }, { status: 400 })
       }
     }
 
@@ -140,7 +144,8 @@ export async function PATCH(
           quantity: quantity ?? undefined,
           price: unitPrice ?? undefined,
           lowStockThreshold: lowStockThreshold ?? undefined,
-          categoryId: categoryId ?? undefined,
+          categoryId: categoryId === undefined ? undefined : categoryId,
+          subCategoryId: subCategoryId === undefined ? undefined : subCategoryId,
           imageUrl: imageUrl === undefined ? undefined : imageUrl || '',
           updatedAt: new Date(),
           meta: {

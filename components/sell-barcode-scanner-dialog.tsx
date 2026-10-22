@@ -135,7 +135,7 @@ export function SellBarcodeScannerDialog({ open, onClose, onScan }: Props) {
             {error}
           </div>
         ) : (
-          <div className="relative aspect-square max-h-[50vh] bg-black rounded-lg overflow-hidden">
+          <div className="relative aspect-square max-h-[65vh] bg-black rounded-lg overflow-hidden">
             <video
               ref={videoRef}
               autoPlay
@@ -145,7 +145,7 @@ export function SellBarcodeScannerDialog({ open, onClose, onScan }: Props) {
             />
             {cameraReady && canAutoScan && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-4/5 h-1/3 border-2 border-primary rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+                <div className="w-[92%] h-1/2 border-2 border-primary rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
               </div>
             )}
           </div>

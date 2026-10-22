@@ -4,6 +4,7 @@ import { parseSpecifications } from '@/lib/product-specifications'
 
 export type ProductWithLiteRelations = Product & {
   category?: (Category & { meta?: RetailCategoryMeta | null }) | null
+  subCategory?: { id: string; name: string } | null
   meta?: RetailProductMeta | null
 }
 
@@ -32,11 +33,14 @@ export function formatProductResponse(product: ProductWithLiteRelations) {
     category_id: product.category?.id ?? product.categoryId ?? null,
     category_name: product.category?.name ?? null,
     category_icon: product.category?.meta?.icon ?? null,
+    sub_category_id: product.subCategory?.id ?? product.subCategoryId ?? null,
+    sub_category_name: product.subCategory?.name ?? null,
   }
 }
 
 export const productInclude = {
   category: { include: { meta: true } },
+  subCategory: { select: { id: true, name: true } },
   meta: true,
 } satisfies Prisma.ProductInclude
 
@@ -50,6 +54,7 @@ export function defaultProductCreateFields(input: {
   quantity: number
   lowStockThreshold: number
   categoryId?: string | null
+  subCategoryId?: string | null
   imageUrl?: string | null
   hasSpecifications?: boolean
 }) {
@@ -64,6 +69,7 @@ export function defaultProductCreateFields(input: {
     quantity: input.quantity,
     lowStockThreshold: input.lowStockThreshold,
     categoryId: input.categoryId ?? null,
+    subCategoryId: input.subCategoryId ?? null,
     imageUrl: input.imageUrl?.trim() || '',
     unitsPerDozen: 12,
     unitOfMeasure: 'each',

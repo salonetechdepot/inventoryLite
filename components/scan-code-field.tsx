@@ -5,7 +5,8 @@ import dynamic from "next/dynamic"
 import { Download, Printer, ScanLine, Sparkles } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { LabelSettingsControls } from "@/components/label-settings-controls"
+import { LabelCopiesField, LabelSettingsControls } from "@/components/label-settings-controls"
+import { resolvePrintAdjust } from "@/lib/label-settings"
 import { useLabelSettings } from "@/hooks/use-label-settings"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { toast } from "@/hooks/use-toast"
@@ -58,6 +59,7 @@ export function ScanCodeField({
     useLabelSettings()
   const [printing, setPrinting] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [copies, setCopies] = useState(1)
 
   const trimmed = value.trim()
   const showPreview = trimmed.length > 0 && isValidScanCode(trimmed)
@@ -106,7 +108,10 @@ export function ScanCodeField({
     }
     setPrinting(true)
     try {
-      const ok = printLabelWithHint(previewRef.current)
+      const ok = printLabelWithHint(previewRef.current, {
+        copies,
+        adjust: resolvePrintAdjust(labelSettings),
+      })
       if (!ok) {
         toast({
           title: "Nothing to print",
@@ -213,6 +218,8 @@ export function ScanCodeField({
             />
           </div>
 
+          <LabelCopiesField value={copies} onChange={setCopies} />
+
           <div className="grid grid-cols-2 gap-2">
             <Button
               type="button"
@@ -222,7 +229,7 @@ export function ScanCodeField({
               onClick={handlePrint}
             >
               <Printer className="size-4 mr-2" />
-              Print label
+              {copies > 1 ? `Print ${copies} labels` : "Print label"}
             </Button>
             <Button
               type="button"

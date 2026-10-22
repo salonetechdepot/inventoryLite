@@ -9,11 +9,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ProductSpecFields } from "@/components/product-spec-fields"
+import { ProductCategorySelect } from "@/components/product-category-select"
 import type { ProductSpecifications } from "@/lib/product-specifications"
 import { toast } from "@/hooks/use-toast"
 import { ScanCodeField } from "@/components/scan-code-field"
@@ -35,16 +35,18 @@ interface Product {
   cost_price: number | null
   low_stock_threshold: number
   category_id: string | null
+  category_name: string | null
+  sub_category_id: string | null
   scan_code: string | null
   tags: string[]
   has_specifications: boolean
   specifications: ProductSpecifications | null
 }
 
-interface Category {
+interface CategoryOption {
   id: string
   name: string
-  icon: string
+  subcategories?: Array<{ id: string; name: string }>
 }
 
 export default function EditProductPage() {
@@ -56,12 +58,12 @@ export default function EditProductPage() {
     `/api/products/${productId}`,
     fetcher
   )
-  const { data: categoriesData } = useSWR<{ categories: Category[] }>(
-    CATEGORIES_CACHE_KEY,
-    fetcher
-  )
   const { data: allProductsData } = useSWR<{ products: Product[] }>(
     PRODUCTS_CACHE_KEY,
+    fetcher
+  )
+  const { data: categoriesData } = useSWR<{ categories: CategoryOption[] }>(
+    CATEGORIES_CACHE_KEY,
     fetcher
   )
   
@@ -72,6 +74,7 @@ export default function EditProductPage() {
   const [specifications, setSpecifications] = useState<ProductSpecifications>({})
   const [lowStockThreshold, setLowStockThreshold] = useState("")
   const [categoryId, setCategoryId] = useState("")
+  const [subCategoryId, setSubCategoryId] = useState("")
   const [scanCode, setScanCode] = useState("")
   const [tagsInput, setTagsInput] = useState("")
   const [hasSpecifications, setHasSpecifications] = useState(false)
@@ -79,11 +82,13 @@ export default function EditProductPage() {
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  const categories = categoriesData?.categories || []
-  const categoryName = useMemo(
-    () => categories.find((c) => c.id === categoryId)?.name ?? "",
-    [categories, categoryId]
-  )
+  const categories = categoriesData?.categories ?? []
+  const categoryName = useMemo(() => {
+    const selected = categories.find((category) => category.id === categoryId)
+    const sub = selected?.subcategories?.find((item) => item.id === subCategoryId)
+    if (selected && sub) return `${selected.name} · ${sub.name}`
+    return selected?.name ?? ""
+  }, [categories, categoryId, subCategoryId])
   const existingScanCodes = useMemo(
     () =>
       (allProductsData?.products ?? [])
@@ -94,19 +99,19 @@ export default function EditProductPage() {
   )
 
   useEffect(() => {
-    if (productData?.product) {
-      const p = productData.product
-      setName(p.name)
-      setQuantity(p.quantity.toString())
-      setUnitPrice(p.unit_price.toString())
-      setCostPrice(p.cost_price != null ? p.cost_price.toString() : "")
-      setSpecifications(p.specifications ?? {})
-      setLowStockThreshold(p.low_stock_threshold.toString())
-      setCategoryId(p.category_id || "")
-      setScanCode(p.scan_code || "")
-      setTagsInput((p.tags || []).join(", "))
-      setHasSpecifications(Boolean(p.has_specifications))
-    }
+    if (!productData?.product) return
+    const p = productData.product
+    setName(p.name)
+    setQuantity(p.quantity.toString())
+    setUnitPrice(p.unit_price.toString())
+    setCostPrice(p.cost_price != null ? p.cost_price.toString() : "")
+    setSpecifications(p.specifications ?? {})
+    setLowStockThreshold(p.low_stock_threshold.toString())
+    setCategoryId(p.category_id || "")
+    setSubCategoryId(p.sub_category_id || "")
+    setScanCode(p.scan_code || "")
+    setTagsInput((p.tags || []).join(", "))
+    setHasSpecifications(Boolean(p.has_specifications))
   }, [productData])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -135,6 +140,7 @@ export default function EditProductPage() {
         costPrice: costPrice.trim() ? parseFloat(costPrice) : null,
         lowStockThreshold: parseInt(lowStockThreshold) || 5,
         categoryId: categoryId || null,
+        subCategoryId: subCategoryId || null,
         scanCode: scanCode.trim() || null,
         tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
         hasSpecifications,
@@ -299,21 +305,13 @@ export default function EditProductPage() {
                 />
               </Field>
 
-              <Field>
-                <FieldLabel htmlFor="category" className="text-base">Category</FieldLabel>
-                <Select value={categoryId} onValueChange={setCategoryId}>
-                  <SelectTrigger className="h-12 text-base">
-                    <SelectValue placeholder="Select a category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+              <ProductCategorySelect
+                categories={categories}
+                categoryId={categoryId}
+                subCategoryId={subCategoryId}
+                onCategoryChange={setCategoryId}
+                onSubCategoryChange={setSubCategoryId}
+              />
 
               <ScanCodeField
                 value={scanCode}

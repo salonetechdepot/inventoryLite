@@ -316,6 +316,17 @@ function parseAdjustProductIdFromUrl(url: string): string | null {
   return match?.[1] ?? null
 }
 
+function primaryCategoryName(payload: Record<string, unknown>): string | null {
+  if (!Array.isArray(payload.categories)) return null
+  const named = payload.categories.filter(
+    (row): row is { name?: string; primary?: boolean } =>
+      Boolean(row) && typeof row === "object" && typeof (row as { name?: unknown }).name === "string"
+  )
+  const primary = named.find((row) => row.primary) ?? named[0]
+  const name = primary?.name?.trim()
+  return name || null
+}
+
 function createOptimisticProduct(payload: Record<string, unknown>, tempId: string): ProductShape {
   return {
     id: tempId,
@@ -325,7 +336,7 @@ function createOptimisticProduct(payload: Record<string, unknown>, tempId: strin
     low_stock_threshold: Number(payload.lowStockThreshold ?? 5),
     image_url: (payload.imageUrl as string | null | undefined) ?? null,
     category_id: (payload.categoryId as string | null | undefined) ?? null,
-    category_name: null,
+    category_name: primaryCategoryName(payload),
     category_icon: null,
     scan_code: (payload.scanCode as string | null | undefined) ?? null,
     tags: Array.isArray(payload.tags) ? (payload.tags as string[]) : [],
@@ -355,6 +366,10 @@ function patchProductWithPayload(product: ProductShape, payload: Record<string, 
     image_url: payload.imageUrl === undefined ? product.image_url : ((payload.imageUrl as string | null) ?? null),
     category_id:
       payload.categoryId === undefined ? (product.category_id ?? null) : ((payload.categoryId as string | null) ?? null),
+    category_name:
+      payload.categories === undefined
+        ? (product.category_name ?? null)
+        : (primaryCategoryName(payload) ?? product.category_name ?? null),
     scan_code:
       payload.scanCode === undefined ? (product.scan_code ?? null) : ((payload.scanCode as string | null) ?? null),
     tags: payload.tags === undefined ? (product.tags ?? []) : (Array.isArray(payload.tags) ? (payload.tags as string[]) : []),

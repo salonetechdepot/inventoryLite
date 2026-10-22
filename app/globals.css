@@ -402,33 +402,54 @@
   body.printing-product-label {
     width: var(--label-paper-width, var(--thermal-paper-width)) !important;
     max-width: var(--label-paper-width, var(--thermal-paper-width)) !important;
+    /* Visible so several copies print as several pages. */
+    overflow: visible !important;
   }
 
+  /* In normal flow (not fixed) so copies become separate pages. */
   body.printing-product-label #product-label-print-portal {
     display: block !important;
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
+    position: static !important;
     width: var(--label-paper-width, var(--thermal-paper-width)) !important;
     max-width: var(--label-paper-width, var(--thermal-paper-width)) !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #fff !important;
     opacity: 1 !important;
-    z-index: 2147483647 !important;
   }
 
-  /* Sizes are inline (see ProductLabelPreview) in label units; 1 unit = 1mm on paper. */
+  /* One page per label; slightly shorter than the label so nothing spills onto a second one. */
+  body.printing-product-label #product-label-print-portal .product-label-page {
+    display: block !important;
+    position: relative !important;
+    width: var(--label-paper-width) !important;
+    height: var(--label-page-height, auto) !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: page !important;
+    page-break-after: always !important;
+  }
+
+  body.printing-product-label #product-label-print-portal .product-label-page:last-child {
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  /* Sizes are inline (see ProductLabelPreview) in label units; 1 unit = 1mm on paper.
+     Printer calibration (move / size / rotate) comes from the label settings. */
   body.printing-product-label #product-label-print-portal .product-label-print-root {
     --label-unit: 1mm !important;
     margin: 0 !important;
-    border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
     background: #fff !important;
     color: #000 !important;
-    page-break-after: avoid !important;
-    page-break-inside: avoid !important;
+    transform: translate(var(--label-offset-x, 0mm), var(--label-offset-y, 0mm))
+      scale(var(--label-scale, 1)) rotate(var(--label-rotate, 0deg)) !important;
+    transform-origin: center center !important;
   }
 
   body.printing-product-label #product-label-print-portal .product-label-print-root * {

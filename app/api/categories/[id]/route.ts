@@ -88,6 +88,16 @@ export async function DELETE(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: 'Category not found' }, { status: 404 })
     }
 
+    const subcategoryCount = await prisma.subCategory.count({
+      where: { categoryId: id, tenantId: session.tenantId },
+    })
+    if (subcategoryCount > 0) {
+      return NextResponse.json(
+        { error: 'Remove the subcategories under this category first.' },
+        { status: 409 }
+      )
+    }
+
     await prisma.category.delete({ where: { id } })
 
     return NextResponse.json({ success: true })

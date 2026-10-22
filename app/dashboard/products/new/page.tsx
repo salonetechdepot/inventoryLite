@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldLabel, FieldDescription, FieldGroup } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { toast } from "@/hooks/use-toast"
 import { ProductSpecFields } from "@/components/product-spec-fields"
+import { ProductCategorySelect } from "@/components/product-category-select"
 import type { ProductSpecifications } from "@/lib/product-specifications"
 import { ScanCodeField } from "@/components/scan-code-field"
 import { scanCodeValidationError } from "@/lib/scan-code"
@@ -25,15 +25,15 @@ import {
 
 const fetcher = fetchWithOfflineCache
 
-interface Category {
+interface CategoryOption {
   id: string
   name: string
-  icon: string
+  subcategories?: Array<{ id: string; name: string }>
 }
 
 export default function NewProductPage() {
   const router = useRouter()
-  const { data: categoriesData } = useSWR<{ categories: Category[] }>(
+  const { data: categoriesData } = useSWR<{ categories: CategoryOption[] }>(
     CATEGORIES_CACHE_KEY,
     fetcher
   )
@@ -43,12 +43,13 @@ export default function NewProductPage() {
   )
 
   const [name, setName] = useState("")
+  const [categoryId, setCategoryId] = useState("")
+  const [subCategoryId, setSubCategoryId] = useState("")
   const [quantity, setQuantity] = useState("")
   const [unitPrice, setUnitPrice] = useState("")
   const [costPrice, setCostPrice] = useState("")
   const [specifications, setSpecifications] = useState<ProductSpecifications>({})
   const [lowStockThreshold, setLowStockThreshold] = useState("5")
-  const [categoryId, setCategoryId] = useState("")
   const [scanCode, setScanCode] = useState("")
   const [tagsInput, setTagsInput] = useState("")
   const [hasSpecifications, setHasSpecifications] = useState(false)
@@ -57,7 +58,7 @@ export default function NewProductPage() {
 
   const categories = categoriesData?.categories ?? []
   const categoryName = useMemo(
-    () => categories.find((c) => c.id === categoryId)?.name ?? "",
+    () => categories.find((category) => category.id === categoryId)?.name ?? "",
     [categories, categoryId]
   )
   const existingScanCodes = useMemo(
@@ -95,6 +96,7 @@ export default function NewProductPage() {
         specifications: hasSpecifications ? specifications : null,
         lowStockThreshold: parseInt(lowStockThreshold) || 5,
         categoryId: categoryId || null,
+        subCategoryId: subCategoryId || null,
         scanCode: scanCode.trim() || null,
         tags: tagsInput.split(",").map((tag) => tag.trim()).filter(Boolean),
         hasSpecifications,
@@ -180,26 +182,13 @@ export default function NewProductPage() {
                 <FieldDescription>What are you selling?</FieldDescription>
               </Field>
 
-              <Field>
-                <FieldLabel htmlFor="category" className="text-base">Category</FieldLabel>
-                <Select value={categoryId} onValueChange={setCategoryId}>
-                  <SelectTrigger className="h-12 text-base">
-                    <SelectValue placeholder="Select a category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {categories.length === 0 && (
-                  <FieldDescription>
-                    No cached categories available offline yet. Connect once to load categories.
-                  </FieldDescription>
-                )}
-              </Field>
+              <ProductCategorySelect
+                categories={categories}
+                categoryId={categoryId}
+                subCategoryId={subCategoryId}
+                onCategoryChange={setCategoryId}
+                onSubCategoryChange={setSubCategoryId}
+              />
 
               <ScanCodeField
                 value={scanCode}

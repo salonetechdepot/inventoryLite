@@ -34,6 +34,13 @@ export type LabelSettings = {
   sizeId: LabelSizeId
   customWidthMm: number
   customHeightMm: number
+  /** Printer calibration: shift printed content (mm). Positive = right / down. */
+  offsetXMm: number
+  offsetYMm: number
+  /** Printer calibration: enlarge/shrink printed content. */
+  scalePct: number
+  /** For printers that feed labels the other way round. */
+  rotate180: boolean
 }
 
 export const DEFAULT_LABEL_SETTINGS: LabelSettings = {
@@ -41,6 +48,48 @@ export const DEFAULT_LABEL_SETTINGS: LabelSettings = {
   sizeId: "2x1in",
   customWidthMm: 50,
   customHeightMm: 25,
+  offsetXMm: 0,
+  offsetYMm: 0,
+  scalePct: 100,
+  rotate180: false,
+}
+
+export const LABEL_ADJUST_LIMITS = {
+  maxOffsetMm: 10,
+  minScalePct: 50,
+  maxScalePct: 150,
+} as const
+
+export const MAX_LABEL_COPIES = 100
+
+/** Calibration applied only when printing (not to the preview or saved image). */
+export type LabelPrintAdjust = {
+  offsetXMm: number
+  offsetYMm: number
+  scale: number
+  rotate180: boolean
+}
+
+export function resolvePrintAdjust(settings: LabelSettings): LabelPrintAdjust {
+  const offset = (value: number) =>
+    clamp(Number(value) || 0, -LABEL_ADJUST_LIMITS.maxOffsetMm, LABEL_ADJUST_LIMITS.maxOffsetMm)
+  return {
+    offsetXMm: offset(settings.offsetXMm),
+    offsetYMm: offset(settings.offsetYMm),
+    scale:
+      clamp(
+        Number(settings.scalePct) || 100,
+        LABEL_ADJUST_LIMITS.minScalePct,
+        LABEL_ADJUST_LIMITS.maxScalePct
+      ) / 100,
+    rotate180: Boolean(settings.rotate180),
+  }
+}
+
+export function hasPrintAdjust(adjust: LabelPrintAdjust): boolean {
+  return (
+    adjust.offsetXMm !== 0 || adjust.offsetYMm !== 0 || adjust.scale !== 1 || adjust.rotate180
+  )
 }
 
 const STORAGE_KEY = "biva-label-settings-v1"
@@ -90,7 +139,9 @@ export type LabelLayout = {
 }
 
 export const LABEL_LINE_HEIGHT = 1.15
-const ROLL_CODE_ROW_MM = 15
+const ROLL_CODE_ROW_MM = 11
+/** Codes use this share of the free height; the rest is breathing room so nothing touches the edges. */
+const CODE_ROW_FILL = 0.75
 
 /** Scale padding, text and codes so everything fits the chosen label. */
 export function labelLayout(size: LabelSize): LabelLayout {
@@ -111,7 +162,10 @@ export function labelLayout(size: LabelSize): LabelLayout {
             (titleFontMm + codeFontMm) * LABEL_LINE_HEIGHT
         )
   // Leave the barcode most of the width so its bars stay wide enough to print.
-  const qrMm = Math.min(availableRowMm, size.widthMm * 0.3)
+  const qrMm = Math.min(
+    size.heightMm === null ? availableRowMm : availableRowMm * CODE_ROW_FILL,
+    size.widthMm * 0.3
+  )
 
   return {
     widthMm: size.widthMm,

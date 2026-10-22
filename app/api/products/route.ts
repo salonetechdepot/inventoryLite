@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { isValidScanCode } from '@/lib/scan-code'
 import { newEntityId } from '@/lib/entity-id'
 import { ensureDefaultWarehouse, setProductStock } from '@/lib/warehouse'
+import { assertProductCategoryChoice } from '@/lib/product-category-choice'
 
 const productCreateSchema = z.object({
   name: trimmedString(255),
@@ -39,6 +40,7 @@ const productCreateSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(50)).max(25).optional().default([]),
   hasSpecifications: z.boolean().optional().default(false),
   specifications: z.unknown().optional(),
+  subCategoryId: entityIdSchema.nullish(),
 })
 
 export async function GET() {
@@ -83,16 +85,16 @@ export async function POST(request: Request) {
       tags,
       hasSpecifications,
       specifications,
+      subCategoryId,
     } = parsed.data
 
-    if (categoryId) {
-      const category = await prisma.category.findFirst({
-        where: { id: categoryId, tenantId: session.tenantId },
-        select: { id: true },
-      })
-      if (!category) {
-        return NextResponse.json({ error: 'Category not found' }, { status: 404 })
-      }
+    const categoryError = await assertProductCategoryChoice(
+      session.tenantId,
+      categoryId,
+      subCategoryId
+    )
+    if (categoryError) {
+      return NextResponse.json({ error: categoryError }, { status: 400 })
     }
 
     const productId = newEntityId()
@@ -100,7 +102,7 @@ export async function POST(request: Request) {
     const sku = barcode
 
     const product = await prisma.$transaction(async (tx) => {
-      const created = await tx.product.create({
+      await tx.product.create({
         data: {
           ...defaultProductCreateFields({
             id: productId,
@@ -112,6 +114,7 @@ export async function POST(request: Request) {
             quantity,
             lowStockThreshold,
             categoryId,
+            subCategoryId,
             imageUrl,
             hasSpecifications,
           }),
@@ -124,12 +127,14 @@ export async function POST(request: Request) {
             },
           },
         },
-        include: productInclude,
       })
 
       const warehouse = await ensureDefaultWarehouse(session.tenantId, tx)
       await setProductStock(session.tenantId, productId, warehouse.id, quantity, tx)
-      return created
+      return tx.product.findFirstOrThrow({
+        where: { id: productId },
+        include: productInclude,
+      })
     })
 
     return NextResponse.json({
