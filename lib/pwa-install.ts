@@ -1,4 +1,13 @@
+import { Capacitor } from '@capacitor/core'
+
 const STORAGE_KEY = 'biva-install-prompt-v1'
+
+/** True inside the Capacitor Android shell, so the site does not offer a second install. */
+export function isNativeShell(): boolean {
+  if (typeof window === 'undefined') return false
+  if (Capacitor.isNativePlatform()) return true
+  return navigator.userAgent.includes('BIVAAndroid')
+}
 
 export type InstallPromptState = 'dismissed' | 'installed'
 
@@ -38,6 +47,7 @@ export function detectInstallPlatform(): InstallPlatform {
 /** Show install UI in production and on localhost (dev testing). */
 export function canShowInstallPrompt(): boolean {
   if (typeof window === 'undefined') return false
+  if (isNativeShell()) return false
   if (process.env.NODE_ENV === 'production') return true
   return (
     window.location.hostname === 'localhost' ||

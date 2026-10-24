@@ -130,6 +130,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  @media screen {
+    body {
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+  }
 }
 
 /* ── Thermal receipt printing (58mm roll; change width for 80mm if needed) ── */

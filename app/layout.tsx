@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from '@/components/ui/toaster'
+import { NativeShell } from '@/components/native-shell'
 import { PwaProvider } from '@/components/pwa-provider'
 import { APP_DEFAULT_DESCRIPTION, APP_FULL_NAME, APP_LOGO_SRC, APP_THEME_COLOR } from '@/lib/site'
 import './globals.css'
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased" suppressHydrationWarning>
         {children}
+        <NativeShell />
         <PwaProvider />
         <Toaster />
         <Analytics />

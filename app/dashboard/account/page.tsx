@@ -17,9 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { ImageUpload } from "@/components/image-upload"
 import { useAuth } from "@/hooks/use-auth"
 import { getConflictCount, cacheData, getCachedData, sendOrQueueMutation, SESSION_CACHE_KEY, type SessionBackup } from "@/lib/offline-sync"
 
@@ -255,15 +254,6 @@ export default function AccountPage() {
                 onChange={(e) => setThemeColor(e.target.value)}
                 className="h-12 w-24 p-1"
               />
-            </Field>
-            <Field>
-              <FieldLabel>Shop logo</FieldLabel>
-              <ImageUpload
-                value={shopLogoUrl}
-                onChange={setShopLogoUrl}
-                folder="branding"
-              />
-              <FieldDescription>Shown on receipts and your account.</FieldDescription>
             </Field>
             <Button onClick={saveSettings} disabled={saving || isOffline}>
               {saving ? "Saving…" : isOffline ? "Save when online" : "Save branding"}

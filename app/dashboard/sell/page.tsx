@@ -1021,7 +1021,7 @@ function SellPageContent() {
       )}
     >
       {/* Top: scan / search / pick */}
-      <header className="sticky top-0 z-20 bg-background border-b pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-[env(safe-area-inset-top,0px)] z-20 bg-background border-b">
         <div className="p-3 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="grid flex-1 grid-cols-2 gap-1 p-1 bg-muted rounded-lg max-w-[14rem]">
