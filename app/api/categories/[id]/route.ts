@@ -98,6 +98,16 @@ export async function DELETE(_request: Request, context: RouteContext) {
       )
     }
 
+    const usedBy = await prisma.product.count({
+      where: { tenantId: session.tenantId, categoryId: id },
+    })
+    if (usedBy > 0) {
+      return NextResponse.json(
+        { error: 'A product still uses this category.' },
+        { status: 409 }
+      )
+    }
+
     await prisma.category.delete({ where: { id } })
 
     return NextResponse.json({ success: true })

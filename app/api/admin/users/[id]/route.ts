@@ -3,6 +3,7 @@ import { isAdminEmail, requireAdminSession } from '@/lib/admin'
 import { prisma } from '@/lib/prisma'
 import { setTenantLockState } from '@/lib/tenant-lock'
 import { entityIdSchema } from '@/lib/api-validation'
+import { rejectCrossOrigin } from '@/lib/same-origin'
 import { z } from 'zod'
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -86,6 +87,9 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
+  const blocked = await rejectCrossOrigin()
+  if (blocked) return blocked
+
   const session = await requireAdminSession()
   if (!session) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -130,6 +134,9 @@ export async function DELETE(_request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  const blocked = await rejectCrossOrigin()
+  if (blocked) return blocked
+
   const session = await requireAdminSession()
   if (!session) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })

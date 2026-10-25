@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
+import { publicError } from "@/lib/public-error"
 import { useAuthStore } from "@/stores/auth-store"
 import {
   pickPortalTokenFromSearch,
@@ -41,11 +42,12 @@ function LoginSsoHandoffInner({ onError, onBusyChange }: LoginSsoHandoffProps) {
         window.location.assign("/dashboard")
         void user
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Sign-in link expired or invalid. Use OTP below."
-        onError(message)
+        onError(
+          publicError(
+            error instanceof Error ? error.message : error,
+            "Sign-in link expired or invalid. Use OTP below."
+          )
+        )
         setSigningIn(false)
         onBusyChange(false)
       }

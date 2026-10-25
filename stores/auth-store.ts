@@ -9,6 +9,7 @@ import {
   type AuthorizedTenant,
 } from "@/lib/roarbyte-api"
 import { normalizeLoginIdentity, normalizeOtpCode } from "@/lib/login-identity"
+import { publicError } from "@/lib/public-error"
 import { hasSessionExpiry, isSessionExpired } from "@/lib/session-expiry"
 import { runDeltaSync } from "@/lib/offline-sync"
 
@@ -20,6 +21,20 @@ export type AuthUser = {
   business_name: string
   theme_color?: string | null
   shop_logo_url?: string | null
+}
+
+async function readJsonObject(res: Response): Promise<Record<string, unknown> | null> {
+  const raw = await res.text()
+  if (!raw.trim()) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 function authUsersEqual(a: AuthUser | null, b: AuthUser | null): boolean {
@@ -129,7 +144,10 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           return {
             ok: false as const,
-            error: error instanceof Error ? error.message : "Could not establish session",
+            error: publicError(
+              error instanceof Error ? error.message : error,
+              "Could not sign you in. Request a new code and try again."
+            ),
           }
         }
       },
@@ -148,18 +166,24 @@ export const useAuthStore = create<AuthState>()(
             modules: tenant.modules,
           }),
         })
-        const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data.error || "Could not establish session")
+        const data = await readJsonObject(res)
+        if (!res.ok || !data?.user) {
+          throw new Error(
+            publicError(
+              data?.error,
+              "Could not sign you in. Request a new code and try again."
+            )
+          )
         }
+        const user = data.user as AuthUser
         set({
-          user: data.user as AuthUser,
+          user,
           accessToken: tenant.token,
           sessionExpiresAt:
             typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
         })
         void runDeltaSync({ full: true })
-        return data.user as AuthUser
+        return user
       },
 
       completePortalHandoff: async (accessToken) => {
@@ -168,18 +192,21 @@ export const useAuthStore = create<AuthState>()(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token: accessToken }),
         })
-        const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data.error || "Sign-in link expired or invalid.")
+        const data = await readJsonObject(res)
+        if (!res.ok || !data?.user) {
+          throw new Error(
+            publicError(data?.error, "Sign-in link expired or invalid.")
+          )
         }
+        const user = data.user as AuthUser
         set({
-          user: data.user as AuthUser,
+          user,
           accessToken,
           sessionExpiresAt:
             typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
         })
         void runDeltaSync({ full: true })
-        return data.user as AuthUser
+        return user
       },
 
       logout: async () => {

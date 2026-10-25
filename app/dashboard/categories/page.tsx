@@ -449,7 +449,7 @@ export default function CategoriesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete category?</AlertDialogTitle>
             <AlertDialogDescription>
-              Products in this category will become uncategorized. This cannot be undone.
+              This removes the category. It stays if a product is still using it. Remove its subcategories first.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

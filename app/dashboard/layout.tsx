@@ -11,6 +11,7 @@ import { PwaInstallPrompt } from "@/components/pwa-install-prompt"
 import { SessionExpiryGuard } from "@/components/session-expiry-guard"
 import { useAuth } from "@/hooks/use-auth"
 import { goToLogin } from "@/lib/auth-navigation"
+import { publicError } from "@/lib/public-error"
 import { readPortalTokenFromLocation, stripPortalTokenFromUrl } from "@/lib/portal-token"
 import { useAuthStore } from "@/stores/auth-store"
 import {
@@ -103,9 +104,10 @@ export default function DashboardLayout({
         await refreshSession()
       } catch (error) {
         setPortalError(
-          error instanceof Error
-            ? error.message
-            : "Sign-in link expired or invalid."
+          publicError(
+            error instanceof Error ? error.message : error,
+            "Sign-in link expired or invalid."
+          )
         )
       } finally {
         handoffActiveRef.current = false

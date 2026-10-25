@@ -17,12 +17,7 @@ export const APP_THEME_COLOR = '#0055FF'
 
 export const APP_BACKGROUND_COLOR = '#ffffff'
 
-/** Public-facing site name and legal contact (override via env). */
+/** Public-facing site name (override via APP_NAME). */
 export function getAppDisplayName() {
   return process.env.APP_NAME?.trim() || APP_SHORT_NAME
-}
-
-export function getPrivacyContactEmail(): string | null {
-  const email = process.env.PRIVACY_CONTACT_EMAIL?.trim()
-  return email || null
 }

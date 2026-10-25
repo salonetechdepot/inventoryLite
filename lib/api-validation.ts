@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { rejectCrossOrigin } from '@/lib/same-origin'
 
 export const uuidSchema = z.string().uuid()
 
@@ -35,6 +36,9 @@ export async function parseJsonBody<T extends z.ZodTypeAny>(
   request: Request,
   schema: T
 ): Promise<{ ok: true; data: z.infer<T> } | { ok: false; response: NextResponse }> {
+  const blocked = await rejectCrossOrigin()
+  if (blocked) return { ok: false, response: blocked }
+
   try {
     const json = await request.json()
     const parsed = schema.safeParse(json)

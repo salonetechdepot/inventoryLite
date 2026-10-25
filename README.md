@@ -93,10 +93,6 @@ Not part of the shop UI.
 2. Sign in to BIVA (same OTP login as shops).
 3. Open **`/admin`** in the browser.
 
-### Privacy
-
-Set `PRIVACY_CONTACT_EMAIL` for `/privacy`.
-
 ## Offline & install
 
 - Sign in **once while online** (OTP). Session stays on device.

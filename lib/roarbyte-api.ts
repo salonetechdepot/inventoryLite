@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios'
 import { LITE_INVENTORY_MODULE_ID, SUPER_ADMIN_ROLE } from '@/lib/constants'
+import { publicError } from '@/lib/public-error'
 
 /** Base Login URL from env, e.g. https://host/api/Login — used in browser via NEXT_PUBLIC_API_URL. */
 export function getLoginApiUrl(): string {
@@ -388,15 +389,16 @@ export function apiErrorMessage(error: unknown, fallback = 'Request failed'): st
   if (axios.isAxiosError(error)) {
     const ax = error as AxiosError<{ message?: string; title?: string; errors?: Record<string, string[]> }>
     const data = ax.response?.data
-    if (data?.message) return data.message
-    if (data?.title) return data.title
+    if (typeof data === 'string') return publicError(data, fallback)
+    if (data?.message) return publicError(data.message, fallback)
+    if (data?.title) return publicError(data.title, fallback)
     if (data?.errors) {
       const first = Object.values(data.errors).flat()[0]
-      if (first) return first
+      if (first) return publicError(first, fallback)
     }
-    if (ax.message) return ax.message
+    return publicError(ax.message, fallback)
   }
-  if (error instanceof Error) return error.message
+  if (error instanceof Error) return publicError(error.message, fallback)
   return fallback
 }
 
