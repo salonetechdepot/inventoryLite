@@ -6,23 +6,22 @@ import { Button } from "@/components/ui/button"
 import { toast } from "@/hooks/use-toast"
 import {
   canShowInstallPrompt,
+  clearDeferredInstallPrompt,
   detectInstallPlatform,
+  getDeferredInstallPrompt,
   getInstallPromptState,
   isAppInstalled,
   isIosSafari,
   setInstallPromptState,
+  subscribeInstallPrompt,
+  type InstallPromptEvent,
 } from "@/lib/pwa-install"
 import { getAppDisplayName } from "@/lib/site"
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>
-  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>
-}
 
 export function PwaInstallPrompt() {
   const appName = getAppDisplayName()
   const [visible, setVisible] = useState(false)
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [deferredPrompt, setDeferredPrompt] = useState<InstallPromptEvent | null>(null)
   const [platform, setPlatform] = useState(detectInstallPlatform())
 
   useEffect(() => {
@@ -32,20 +31,19 @@ export function PwaInstallPrompt() {
 
     setPlatform(detectInstallPlatform())
 
-    const onBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault()
-      setDeferredPrompt(event as BeforeInstallPromptEvent)
+    const apply = (event: InstallPromptEvent | null) => {
+      if (isAppInstalled() || getInstallPromptState()) {
+        setDeferredPrompt(null)
+        setVisible(false)
+        return
+      }
+      if (!event) return
+      setDeferredPrompt(event)
       setVisible(true)
     }
 
-    const onInstalled = () => {
-      setInstallPromptState("installed")
-      setVisible(false)
-      setDeferredPrompt(null)
-    }
-
-    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt)
-    window.addEventListener("appinstalled", onInstalled)
+    apply(getDeferredInstallPrompt())
+    const unsubscribe = subscribeInstallPrompt(apply)
 
     const timer = window.setTimeout(() => {
       if (!isAppInstalled() && !getInstallPromptState()) {
@@ -55,13 +53,14 @@ export function PwaInstallPrompt() {
 
     return () => {
       window.clearTimeout(timer)
-      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt)
-      window.removeEventListener("appinstalled", onInstalled)
+      unsubscribe()
     }
   }, [])
 
   const dismiss = () => {
     setInstallPromptState("dismissed")
+    clearDeferredInstallPrompt()
+    setDeferredPrompt(null)
     setVisible(false)
   }
 
@@ -71,6 +70,7 @@ export function PwaInstallPrompt() {
       const choice = await deferredPrompt.userChoice
       if (choice.outcome === "accepted") {
         setInstallPromptState("installed")
+        clearDeferredInstallPrompt()
         setVisible(false)
         setDeferredPrompt(null)
       }

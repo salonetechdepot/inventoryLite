@@ -2,18 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { AlertTriangle, ArrowLeft, CheckCircle2, Trash2 } from "lucide-react"
+import { AlertTriangle, ArrowLeft, CheckCircle2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
 import {
-  clearConflicts,
   dismissConflictAndReconcile,
   listConflicts,
+  reloadShopFromServer,
   retrySyncConflict,
-  runDeltaSync,
   type SyncConflict,
 } from "@/lib/offline-sync"
 import {
@@ -22,9 +20,9 @@ import {
 } from "@/lib/sync-conflict-display"
 
 export default function SyncConflictsPage() {
-  const router = useRouter()
   const [conflicts, setConflicts] = useState<SyncConflict[]>([])
   const [loading, setLoading] = useState(true)
+  const [reloading, setReloading] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -37,23 +35,54 @@ export default function SyncConflictsPage() {
     void refresh()
   }, [refresh])
 
+  const handleReloadShop = async () => {
+    const ok = window.confirm(
+      "Reload shop data from the server?\n\nThis phone will forget waiting sales that were never sent. Any of those sales must be entered again. Products and receipts will then match the server."
+    )
+    if (!ok) return
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast({
+        title: "Go online first",
+        description: "Connect to the internet, then reload shop data.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setReloading(true)
+    const result = await reloadShopFromServer()
+    if (!result.ok) {
+      setReloading(false)
+      await refresh()
+      toast({
+        title: "Could not reload",
+        description: result.reason,
+        variant: "destructive",
+      })
+      return
+    }
+
+    toast({ title: "Shop data reloaded", description: "This phone now matches the server." })
+    window.location.assign("/dashboard")
+  }
+
   const handleDismiss = async (id: string) => {
     await dismissConflictAndReconcile(id)
     await refresh()
-    toast({ title: "Conflict dismissed", description: "Local cache refreshed from server." })
+    toast({ title: "Using server copy", description: "This phone was updated from the server." })
   }
 
   const handleRetry = async (id: string) => {
     const result = await retrySyncConflict(id)
     await refresh()
     if (result && "ok" in result && result.ok === false) {
-      toast({ title: "Could not retry", description: result.reason, variant: "destructive" })
+      toast({ title: "Could not send", description: result.reason, variant: "destructive" })
       return
     }
     if (result && "conflicts" in result && result.conflicts > 0) {
       toast({
         title: "Still blocked",
-        description: result.lastError || "Fix the issue and try again, or use the server version.",
+        description: "Reload shop data below if this keeps failing.",
         variant: "destructive",
       })
       return
@@ -61,26 +90,11 @@ export default function SyncConflictsPage() {
     if (result && "synced" in result && result.synced === 0) {
       toast({
         title: "Waiting to send",
-        description:
-          result.lastError || "The change is back in the queue and will send automatically.",
+        description: result.lastError || "The change is waiting and will send when it can.",
       })
       return
     }
-    toast({ title: "Synced", description: "Change applied on the server." })
-  }
-
-  const handleDismissAll = async () => {
-    const ok = window.confirm(
-      `Dismiss all ${conflicts.length} change(s)? They will not be sent to the server.`
-    )
-    if (!ok) return
-    await clearConflicts()
-    if (typeof navigator !== "undefined" && navigator.onLine) {
-      await runDeltaSync()
-    }
-    await refresh()
-    toast({ title: "All conflicts cleared" })
-    router.push("/dashboard")
+    toast({ title: "Sent", description: "The change is now on the server." })
   }
 
   return (
@@ -100,8 +114,8 @@ export default function SyncConflictsPage() {
               Sync conflicts
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Changes made offline could not be applied on the server. Review each
-              item, fix data if needed, then dismiss.
+              This phone saved a change the server will not accept. Reload shop
+              data to use the server copy.
             </p>
           </div>
           {conflicts.length > 0 && (
@@ -110,29 +124,25 @@ export default function SyncConflictsPage() {
         </div>
       </header>
 
-      <Card className="border-dashed">
-        <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
-          <p className="font-medium text-foreground">What to do</p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li>
-              <strong>Sale conflicts</strong> are rare — usually a product that was deleted
-              on another device, or a return that no longer matches its original sale.
-            </li>
-            <li>
-              <strong>Product conflicts</strong> may be a duplicate scan code or
-              stale edit — refresh Products and try again.
-            </li>
-            <li>
-              <strong>Send my change</strong> re-sends what this device saved. If it is
-              rejected again, fix the cause (e.g. restore the product) or use the server version.
-            </li>
-            <li>
-              <strong>Use server</strong> drops the rejected change and refreshes products and
-              receipts from the server. This only runs fully when you are online.
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
+      {conflicts.length > 0 && (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <p className="text-sm text-muted-foreground">
+              If Send my change and Use server both fail, reload shop data. You
+              stay signed in. Sales that never reached the server must be entered
+              again.
+            </p>
+            <Button
+              className="w-full h-12"
+              onClick={() => void handleReloadShop()}
+              disabled={reloading}
+            >
+              <RefreshCw className={`mr-2 size-4 ${reloading ? "animate-spin" : ""}`} />
+              {reloading ? "Reloading shop data…" : "Reload shop data"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground text-center py-8">Loading…</p>
@@ -150,65 +160,49 @@ export default function SyncConflictsPage() {
           </CardContent>
         </Card>
       ) : (
-        <>
-          <ul className="space-y-3">
-            {conflicts.map((conflict) => {
-              const { title, detail } = describeSyncConflict(conflict)
-              return (
-                <li key={conflict.id}>
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold">{title}</p>
-                          <p className="text-sm text-muted-foreground mt-0.5">
-                            {detail}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-2">
-                            {formatConflictTime(conflict.createdAt)} · HTTP{" "}
-                            {conflict.status}
-                          </p>
-                        </div>
-                        <Badge variant="outline" className="shrink-0">
-                          {conflict.method}
-                        </Badge>
-                      </div>
-                      <p className="text-xs rounded-md bg-destructive/10 text-destructive p-2">
-                        {conflict.reason}
+        <ul className="space-y-3">
+          {conflicts.map((conflict) => {
+            const { title, detail } = describeSyncConflict(conflict)
+            return (
+              <li key={conflict.id}>
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold">{title}</p>
+                      <p className="text-sm text-muted-foreground mt-0.5">{detail}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {formatConflictTime(conflict.createdAt)}
                       </p>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <Button
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => void handleRetry(conflict.id)}
-                        >
-                          Send my change
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => void handleDismiss(conflict.id)}
-                        >
-                          Use server
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </li>
-              )
-            })}
-          </ul>
-
-          <Button
-            variant="destructive"
-            className="w-full h-12"
-            onClick={() => void handleDismissAll()}
-          >
-            <Trash2 className="mr-2 size-4" />
-            Dismiss all ({conflicts.length})
-          </Button>
-        </>
+                    </div>
+                    <p className="text-sm rounded-md bg-destructive/10 text-destructive p-2">
+                      {conflict.reason}
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        disabled={reloading}
+                        onClick={() => void handleRetry(conflict.id)}
+                      >
+                        Send my change
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="flex-1"
+                        disabled={reloading}
+                        onClick={() => void handleDismiss(conflict.id)}
+                      >
+                        Use server
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </li>
+            )
+          })}
+        </ul>
       )}
     </main>
   )

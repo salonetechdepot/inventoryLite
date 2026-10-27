@@ -36,6 +36,7 @@ const CONFLICT_STORE = "conflicts"
 const MAX_RETRY_COUNT = 5
 /** Fail fast so a dead connection cannot pin the UI on skeletons or “Syncing…”. */
 const FETCH_DEADLINE_MS = 8_000
+const FULL_SYNC_DEADLINE_MS = 30_000
 const CACHED_FETCH_DEADLINE_MS = 2_500
 
 function fetchWithDeadline(
@@ -1290,6 +1291,54 @@ export async function clearConflicts() {
   await Promise.all(conflicts.map((conflict) => deleteFromStore(CONFLICT_STORE, conflict.id)))
 }
 
+/**
+ * Drop this shop's waiting changes and cached products/receipts, then download
+ * the server copy. Used when Send my change / Use server both fail.
+ */
+export async function reloadShopFromServer(): Promise<
+  { ok: true } | { ok: false; reason: string }
+> {
+  if (!isBrowser()) return { ok: false, reason: "Not in browser" }
+  if (!navigator.onLine) {
+    return { ok: false, reason: "Connect to the internet, then try again." }
+  }
+
+  const tenantId = await currentTenantId()
+  if (!tenantId) {
+    return { ok: false, reason: "Sign in again, then reload shop data." }
+  }
+
+  const [queue, conflicts] = await Promise.all([getQueue(), listConflicts()])
+  const shopQueue = queue.filter((mutation) => belongsToTenant(mutation, tenantId))
+
+  await Promise.all([
+    ...shopQueue.map((mutation) => deleteFromStore(QUEUE_STORE, mutation.id)),
+    ...conflicts.map((conflict) => deleteFromStore(CONFLICT_STORE, conflict.id)),
+    ...TENANT_DATA_CACHE_KEYS.map((key) => deleteFromStore(CACHE_STORE, key)),
+    deleteFromStore(CACHE_STORE, SYNC_ID_MAP_CACHE_KEY),
+  ])
+  await Promise.all(
+    TENANT_DATA_CACHE_KEYS.map((key) => mutate(key, undefined, { revalidate: false }))
+  )
+  window.dispatchEvent(new CustomEvent(OFFLINE_QUEUE_CHANGED_EVENT))
+
+  const result = await runDeltaSync({ full: true })
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: "Could not load shop data. Stay online and try again.",
+    }
+  }
+
+  try {
+    await warmDashboardRscCache()
+  } catch {
+    // The next dashboard visit will load pages from the network.
+  }
+
+  return { ok: true }
+}
+
 export async function dismissConflict(id: string) {
   if (!isBrowser()) return
   await deleteFromStore(CONFLICT_STORE, id)
@@ -1564,7 +1613,10 @@ export async function runDeltaSync(options?: {
       reason: "offline",
     }
   }
-  if (activeDeltaSync) return activeDeltaSync
+  if (activeDeltaSync) {
+    if (!options?.full) return activeDeltaSync
+    await activeDeltaSync
+  }
   activeDeltaSync = performDeltaSync(options).finally(() => {
     activeDeltaSync = null
   })
@@ -1620,7 +1672,7 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
     const res = await fetchWithDeadline(
       syncUrl,
       { credentials: "same-origin" },
-      FETCH_DEADLINE_MS
+      forceFull ? FULL_SYNC_DEADLINE_MS : FETCH_DEADLINE_MS
     )
     if (!res.ok || isOfflineGatewayResponse(res)) {
       const fallbackOk = await refreshOfflineDataViaIndividualFetches()

@@ -59,3 +59,53 @@ export function isIosSafari(): boolean {
   if (typeof navigator === 'undefined') return false
   return /iPad|iPhone|iPod/.test(navigator.userAgent)
 }
+
+export type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
+
+let deferredInstallPrompt: InstallPromptEvent | null = null
+const installPromptListeners = new Set<(event: InstallPromptEvent | null) => void>()
+let installPromptCaptureStarted = false
+
+function emitInstallPrompt() {
+  for (const listener of installPromptListeners) listener(deferredInstallPrompt)
+}
+
+export function getDeferredInstallPrompt() {
+  return deferredInstallPrompt
+}
+
+export function subscribeInstallPrompt(
+  listener: (event: InstallPromptEvent | null) => void
+) {
+  installPromptListeners.add(listener)
+  return () => installPromptListeners.delete(listener)
+}
+
+export function clearDeferredInstallPrompt() {
+  deferredInstallPrompt = null
+  emitInstallPrompt()
+}
+
+/**
+ * Catch the browser install banner on the first page and hold it.
+ * The banner itself is shown only after sign-in, from the dashboard.
+ */
+export function startInstallPromptCapture() {
+  if (typeof window === 'undefined' || installPromptCaptureStarted) return
+  installPromptCaptureStarted = true
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault()
+    if (!canShowInstallPrompt() || isAppInstalled() || getInstallPromptState()) return
+    deferredInstallPrompt = event as InstallPromptEvent
+    emitInstallPrompt()
+  })
+
+  window.addEventListener('appinstalled', () => {
+    setInstallPromptState('installed')
+    clearDeferredInstallPrompt()
+  })
+}
