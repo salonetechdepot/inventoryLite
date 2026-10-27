@@ -1,3 +1,5 @@
+import { isAppInstalled } from '@/lib/pwa-install'
+
 /** Shown once when opening the browser print dialog for 58mm thermal output. */
 export const THERMAL_PRINT_HINT = {
   title: '58mm print settings',
@@ -84,4 +86,82 @@ export function attachThermalPrintCleanup(
 ): void {
   window.addEventListener('afterprint', cleanup, { once: true })
   window.setTimeout(cleanup, timeoutMs)
+}
+
+/**
+ * Print the receipt or label that was just mounted on the page.
+ * A normal browser tab prints in place. The installed app prints from a
+ * hidden frame so Android does not discard the window and show
+ * "This page couldn't load" when the print dialog closes.
+ */
+export function printPreparedDocument(): void {
+  if (!isAppInstalled()) {
+    window.print()
+    return
+  }
+  if (!printInstalledDocument()) window.print()
+}
+
+function printInstalledDocument(): boolean {
+  const portal =
+    document.getElementById('receipt-print-portal') ??
+    document.getElementById('product-label-print-portal')
+  if (!portal) return false
+
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.cssText =
+    'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'
+  document.body.appendChild(iframe)
+
+  const frameWindow = iframe.contentWindow
+  const frameDoc = frameWindow?.document
+  if (!frameWindow || !frameDoc) {
+    iframe.remove()
+    return false
+  }
+
+  frameDoc.open()
+  frameDoc.write('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>')
+  frameDoc.close()
+
+  frameDoc.documentElement.className = document.documentElement.className
+  const rootStyle = document.documentElement.getAttribute('style')
+  if (rootStyle) frameDoc.documentElement.setAttribute('style', rootStyle)
+  frameDoc.body.className = document.body.className
+
+  for (const node of document.head.querySelectorAll('link[rel="stylesheet"], style')) {
+    frameDoc.head.appendChild(node.cloneNode(true))
+  }
+  frameDoc.body.appendChild(portal.cloneNode(true))
+
+  let printed = false
+  const trigger = () => {
+    if (printed) return
+    printed = true
+    try {
+      frameWindow.focus()
+      frameWindow.print()
+    } catch {
+      // Top-level print is what makes Android discard the installed app.
+    }
+  }
+
+  const links = frameDoc.querySelectorAll('link[rel="stylesheet"]')
+  let pending = links.length
+  const finished = () => {
+    pending -= 1
+    if (pending <= 0) trigger()
+  }
+  links.forEach((link) => {
+    link.addEventListener('load', finished)
+    link.addEventListener('error', finished)
+  })
+  if (pending === 0) trigger()
+  window.setTimeout(trigger, 700)
+
+  const remove = () => window.setTimeout(() => iframe.remove(), 400)
+  frameWindow.addEventListener('afterprint', remove, { once: true })
+  window.setTimeout(remove, 60_000)
+  return true
 }

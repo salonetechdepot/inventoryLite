@@ -1,6 +1,7 @@
 import {
   attachThermalPrintCleanup,
   prepareThermalClone,
+  printPreparedDocument,
   scheduleThermalPrint,
 } from '@/lib/thermal-print'
 
@@ -59,7 +60,7 @@ export function printThermalReceipt(sourceContainer?: HTMLElement): boolean {
   attachThermalPrintCleanup(cleanup)
 
   scheduleThermalPrint(() => {
-    window.print()
+    printPreparedDocument()
   })
 
   return true

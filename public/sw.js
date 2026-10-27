@@ -1,4 +1,4 @@
-const SW_VERSION = "v11"
+const SW_VERSION = "v12"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
 const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
@@ -28,9 +28,11 @@ function rscCacheKey(pathname) {
 function offlineHtml() {
   return caches.match(OFFLINE_FALLBACK_URL).then((cached) => {
     if (cached) return cached
+    // Status 200 so Android Chrome shows this page. A 503 navigation is replaced
+    // with the browser's own "This page couldn't load" screen.
     return new Response(
-      '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title></head><body style="font-family:system-ui,sans-serif;padding:24px;text-align:center"><p>BIVA is offline. Open the app once while online, then try again.</p></body></html>',
-      { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title></head><body style="font-family:system-ui,sans-serif;padding:24px;text-align:center"><p>BIVA is offline. Open the app once while online, then try again.</p><p><a href="/dashboard/sell">Reopen Sell</a></p></body></html>',
+      { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
     )
   })
 }
@@ -164,8 +166,9 @@ function fetchWithTimeout(request, ms) {
 }
 
 /**
- * Page loads: network first (with cookies) and keep a copy so a reload while
- * offline — e.g. Android discarding the tab during printing — reopens the app.
+ * Page loads: try the network briefly, then the saved page. Android often still
+ * reports "online" while the radio is dead, and a long wait makes Chrome show
+ * "This page couldn't load" after the print screen closes the installed app.
  */
 async function networkFirstPage(request, url) {
   const cached = (await caches.match(request)) || (await caches.match(url.pathname))
@@ -174,7 +177,7 @@ async function networkFirstPage(request, url) {
   if (!self.navigator.onLine) return fallback()
 
   try {
-    const networkResponse = await fetchWithTimeout(request, cached ? 6000 : 30000)
+    const networkResponse = await fetchWithTimeout(request, 1500)
     // Navigations must not receive a followed redirect; let the browser redirect itself.
     if (networkResponse.redirected) return Response.redirect(networkResponse.url, 302)
     if (!isUnsafeToCache(request, networkResponse)) {

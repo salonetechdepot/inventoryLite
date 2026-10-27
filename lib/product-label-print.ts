@@ -1,6 +1,7 @@
 import {
   attachThermalPrintCleanup,
   prepareThermalClone,
+  printPreparedDocument,
   scheduleThermalPrint,
 } from '@/lib/thermal-print'
 import {
@@ -108,7 +109,7 @@ function printLabelElement(
   attachThermalPrintCleanup(cleanup)
 
   scheduleThermalPrint(() => {
-    window.print()
+    printPreparedDocument()
   })
 
   return true
