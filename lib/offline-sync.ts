@@ -1273,6 +1273,32 @@ export async function getConflictCount() {
   return conflicts.length
 }
 
+const OFFLINE_READY_CACHE_KEYS = [
+  SESSION_CACHE_KEY,
+  PRODUCTS_CACHE_KEY,
+  CATEGORIES_CACHE_KEY,
+  DASHBOARD_STATS_CACHE_KEY,
+  SALE_RECEIPTS_CACHE_KEY,
+  RETURN_RECEIPTS_CACHE_KEY,
+] as const
+
+/** True after a full shop download is on this phone and nothing is waiting. */
+export async function isShopReadyForOffline(): Promise<boolean> {
+  if (!isBrowser()) return false
+  const tenantId = await currentTenantId()
+  if (!tenantId) return false
+  if ((await getQueuedMutationCount()) > 0) return false
+  if ((await getConflictCount()) > 0) return false
+
+  const cursor = await getCachedData<SyncCursorState>(SYNC_CURSOR_CACHE_KEY)
+  if (!cursor?.lastFullSyncAt || cursor.tenantId !== tenantId) return false
+
+  for (const key of OFFLINE_READY_CACHE_KEYS) {
+    if ((await getCachedData(key)) == null) return false
+  }
+  return true
+}
+
 /** Conflicts for the signed-in shop, newest first. */
 export async function listConflicts() {
   if (!isBrowser()) return [] as SyncConflict[]
@@ -1741,6 +1767,14 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
         ? payload.cursor
         : cursorState?.lastFullSyncAt ?? payload.cursor,
     })
+
+    if (payload.full) {
+      try {
+        await warmDashboardRscCache()
+      } catch {
+        // Tab pages still work online; products and receipts are already saved.
+      }
+    }
 
     if (isBrowser()) {
       window.dispatchEvent(

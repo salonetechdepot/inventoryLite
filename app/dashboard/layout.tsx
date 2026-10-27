@@ -7,6 +7,7 @@ import { BottomNav } from "@/components/bottom-nav"
 import { ThemeSync } from "@/components/theme-sync"
 import { OfflineSync } from "@/components/offline-sync"
 import { BackgroundCacheRefresh } from "@/components/background-cache-refresh"
+import { DataSyncedBanner } from "@/components/data-synced-banner"
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt"
 import { SessionExpiryGuard } from "@/components/session-expiry-guard"
 import { useAuth } from "@/hooks/use-auth"
@@ -178,6 +179,7 @@ export default function DashboardLayout({
       ) : null}
       <ThemeSync />
       <OfflineSync onSignInRequired={handleExpired} />
+      <DataSyncedBanner />
       <BackgroundCacheRefresh />
       <PwaInstallPrompt />
       {isOffline && pathname && !isDashboardOfflinePath(pathname) ? (

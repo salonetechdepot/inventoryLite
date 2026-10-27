@@ -5,7 +5,10 @@ import {
   OFFLINE_BACKGROUND_REFRESH_MS,
   runDeltaSync,
 } from "@/lib/offline-sync"
-import { prefetchDashboardRoutes } from "@/lib/offline-navigation"
+import {
+  prefetchDashboardRoutes,
+  warmDashboardRscCache,
+} from "@/lib/offline-navigation"
 import { useRouter } from "next/navigation"
 
 /**
@@ -15,6 +18,7 @@ import { useRouter } from "next/navigation"
 export function BackgroundCacheRefresh() {
   const router = useRouter()
   const busyRef = useRef(false)
+  const warmedRef = useRef(false)
 
   useEffect(() => {
     const runRefresh = async () => {
@@ -25,6 +29,10 @@ export function BackgroundCacheRefresh() {
       try {
         prefetchDashboardRoutes(router.prefetch.bind(router))
         await runDeltaSync()
+        if (!warmedRef.current) {
+          warmedRef.current = true
+          await warmDashboardRscCache()
+        }
       } finally {
         busyRef.current = false
       }
