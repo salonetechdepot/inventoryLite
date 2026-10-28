@@ -61,7 +61,7 @@ export default function DashboardLayout({
     landingCheckedRef.current = true
     if (pathname === "/dashboard" && getPosSettings().openOnSell) {
       setOpeningSell(true)
-      router.replace(SELL_PATH)
+      window.location.replace(SELL_PATH)
     }
   }, [user, pathname, router])
 

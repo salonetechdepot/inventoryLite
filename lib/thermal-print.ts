@@ -1,5 +1,3 @@
-import { isAppInstalled } from '@/lib/pwa-install'
-
 /** Shown once when opening the browser print dialog for 58mm thermal output. */
 export const THERMAL_PRINT_HINT = {
   title: '58mm print settings',
@@ -95,10 +93,8 @@ export function attachThermalPrintCleanup(
  * "This page couldn't load" when the print dialog closes.
  */
 export function printPreparedDocument(): void {
-  if (!isAppInstalled()) {
-    window.print()
-    return
-  }
+  // Always print from a hidden frame. Top-level window.print() makes Android
+  // Chrome drop the tab and show "This page couldn't load" while offline.
   if (!printInstalledDocument()) window.print()
 }
 

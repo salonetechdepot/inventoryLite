@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { Home, Package, ShoppingCart, Receipt, Undo2, User } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -15,17 +15,12 @@ const navItems = [
 
 export function BottomNav() {
   const pathname = usePathname()
-  const router = useRouter()
 
   const navigate = (href: string) => {
     if (pathname === href) return
-    // Offline: load the saved page for this tab. Client routing reuses Sell's
-    // payload and every tab looks like Sell.
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      window.location.assign(href)
-      return
-    }
-    router.push(href)
+    // Full load so each tab uses its own saved page. Client routing reused
+    // Sell while airplane mode still reported "online".
+    window.location.assign(href)
   }
 
   return (

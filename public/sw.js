@@ -1,4 +1,4 @@
-const SW_VERSION = "v14"
+const SW_VERSION = "v15"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
 const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
@@ -118,23 +118,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys()
-      const runtime = await caches.open(RUNTIME_CACHE)
+      // Drop previous runtime copies. Older workers stored Sell HTML under
+      // Products / History, and copying that forward kept every tab on Sell.
       await Promise.all(
         keys
           .filter((key) => key !== STATIC_CACHE && key !== RUNTIME_CACHE)
-          .map(async (key) => {
-            if (key.startsWith("biva-runtime-")) {
-              const previous = await caches.open(key)
-              const requests = await previous.keys()
-              await Promise.all(
-                requests.map(async (request) => {
-                  const response = await previous.match(request)
-                  if (response) await runtime.put(request, response)
-                })
-              )
-            }
-            await caches.delete(key)
-          })
+          .map((key) => caches.delete(key))
       )
     })()
   )

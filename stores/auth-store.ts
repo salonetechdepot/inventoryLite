@@ -182,7 +182,7 @@ export const useAuthStore = create<AuthState>()(
           sessionExpiresAt:
             typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
         })
-        void runDeltaSync({ full: true })
+        await runDeltaSync({ full: true })
         return user
       },
 
@@ -205,7 +205,7 @@ export const useAuthStore = create<AuthState>()(
           sessionExpiresAt:
             typeof data.sessionExpiresAt === "string" ? data.sessionExpiresAt : null,
         })
-        void runDeltaSync({ full: true })
+        await runDeltaSync({ full: true })
         return user
       },
 

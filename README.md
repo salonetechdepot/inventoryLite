@@ -50,13 +50,13 @@ Open [http://localhost:3000](http://localhost:3000).
 4. **Start command:** `pnpm start` (or `npm start`)  
 5. **Environment variables** (same as below): at minimum `DATABASE_URL`, `JWT_SECRET`, `API_URL`, `NEXT_PUBLIC_API_URL`, and optional `APP_NAME=BIVA`.
 
-The build script runs `prisma generate`, `prisma migrate deploy`, then `next build`.
+The build script runs `prisma generate`, then `next build`. It does **not** run `prisma migrate deploy` against the shared main-app database.
 
 ### 3. After deploy (each shop device)
 
 1. Open the live URL **while online** and sign in.
-2. Visit **Sell**, **Products**, and **History** once (offline cache).
-3. After a major update, clear site data or unregister the old service worker once.
+2. Wait for **Data synced**. Tabs are warmed in the background.
+3. After a major update, open the site once online so the new service worker installs.
 
 ### Vercel (alternative)
 
@@ -105,7 +105,7 @@ Not part of the shop UI.
 1. **Clear site data** for your app URL (old service worker): DevTools → Application → Service Workers → Unregister → Clear storage.
 2. Confirm deploy **succeeded**; build logs must not show `DATABASE_URL is missing` or `migrate deploy failed`.
 3. Wake **Neon** before redeploying if migrations fail.
-4. **Offline on live URL:** sign in online, open Sell/Products/History, then test offline. After rebrand deploy, service worker **v8** uses new cache names — clear old site data once.
+4. **Offline on live URL:** sign in online, wait for Data synced, then test offline. Confirm `/sw.js` starts with `SW_VERSION = "v15"`. If tabs still open Sell, clear site data once and sign in again while online.
 
 ## Scripts
 
