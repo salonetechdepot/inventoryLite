@@ -19,6 +19,12 @@ export function BottomNav() {
 
   const navigate = (href: string) => {
     if (pathname === href) return
+    // Offline: load the saved page for this tab. Client routing reuses Sell's
+    // payload and every tab looks like Sell.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      window.location.assign(href)
+      return
+    }
     router.push(href)
   }
 

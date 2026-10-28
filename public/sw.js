@@ -1,16 +1,24 @@
-const SW_VERSION = "v12"
+const SW_VERSION = "v14"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
 const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
-const DASHBOARD_SHELL_FALLBACKS = [
-  "/dashboard/sell",
-  "/dashboard/products",
-  "/dashboard/sales",
-  "/dashboard/returns",
-  "/dashboard",
-  "/",
-]
+function normalizePath(pathname) {
+  if (!pathname) return "/"
+  const trimmed = pathname.replace(/\/+$/, "")
+  return trimmed === "" ? "/" : trimmed
+}
+
+/** Same tab only — never serve Sell HTML for Products. */
+function pageCachePaths(pathname) {
+  const path = normalizePath(pathname)
+  const paths = [path]
+  const parts = path.split("/").filter(Boolean)
+  if (parts[0] === "dashboard" && parts.length > 2) {
+    paths.push(`/${parts[0]}/${parts[1]}`)
+  }
+  return paths
+}
 
 /** Public assets only — do not precache authenticated dashboard HTML. */
 const PRECACHE_URLS = [
@@ -38,23 +46,10 @@ function offlineHtml() {
 }
 
 async function cachedAppShell(pathname) {
-  const exact = await caches.match(pathname)
-  if (exact) return exact
-
-  if (pathname.startsWith("/dashboard")) {
-    for (const fallback of DASHBOARD_SHELL_FALLBACKS) {
-      const hit = await caches.match(fallback)
-      if (hit) return hit
-    }
+  for (const path of pageCachePaths(pathname)) {
+    const hit = await caches.match(path)
+    if (hit) return hit
   }
-
-  if (pathname === "/dashboard" || pathname === "/") {
-    const dash = await caches.match("/dashboard")
-    if (dash) return dash
-    const root = await caches.match("/")
-    if (root) return root
-  }
-
   return offlineHtml()
 }
 
@@ -62,11 +57,11 @@ async function cachedAppShell(pathname) {
 function isUnsafeToCache(request, response) {
   if (!response || !response.ok || response.redirected) return true
   try {
-    const requestPath = new URL(request.url).pathname
-    const finalPath = new URL(response.url).pathname
+    const requestPath = normalizePath(new URL(request.url).pathname)
+    const finalPath = normalizePath(new URL(response.url).pathname)
     const landedOnLogin = finalPath === "/login" || finalPath.startsWith("/login/")
     if (landedOnLogin && requestPath !== finalPath) return true
-    if (requestPath.startsWith("/dashboard") && !finalPath.startsWith("/dashboard")) return true
+    if (requestPath.startsWith("/dashboard") && requestPath !== finalPath) return true
   } catch {
     return true
   }
@@ -101,13 +96,9 @@ async function matchRsc(request) {
   const exact = await caches.match(request)
   if (exact) return exact
   const url = new URL(request.url)
-  const byPath = await caches.match(rscCacheKey(url.pathname))
-  if (byPath) return byPath
-  if (url.pathname.startsWith("/dashboard")) {
-    for (const fallback of DASHBOARD_SHELL_FALLBACKS) {
-      const alt = await caches.match(rscCacheKey(fallback))
-      if (alt) return alt
-    }
+  for (const path of pageCachePaths(url.pathname)) {
+    const byPath = await caches.match(rscCacheKey(path))
+    if (byPath) return byPath
   }
   return null
 }
@@ -165,14 +156,34 @@ function fetchWithTimeout(request, ms) {
   return next.finally(() => clearTimeout(timer))
 }
 
+async function updatePageCache(request, url) {
+  try {
+    const networkResponse = await fetchWithTimeout(request, 4000)
+    if (networkResponse.redirected || isUnsafeToCache(request, networkResponse)) return
+    const cache = await caches.open(RUNTIME_CACHE)
+    await cacheResponse(cache, request, networkResponse)
+  } catch {
+    // Stay on the saved page.
+  }
+}
+
 /**
- * Page loads: try the network briefly, then the saved page. Android often still
- * reports "online" while the radio is dead, and a long wait makes Chrome show
- * "This page couldn't load" after the print screen closes the installed app.
+ * Dashboard pages: saved copy first. Waiting on a dead radio makes Chrome
+ * show "This page couldn't load" even when the receipt is already on the phone.
  */
 async function networkFirstPage(request, url) {
   const cached = (await caches.match(request)) || (await caches.match(url.pathname))
   const fallback = () => (cached ? cached : cachedAppShell(url.pathname))
+  const isDashboard =
+    url.pathname === "/" || url.pathname.startsWith("/dashboard")
+
+  if (isDashboard) {
+    const shell = cached || (await cachedAppShell(url.pathname))
+    if (shell && shell.ok) {
+      if (self.navigator.onLine) void updatePageCache(request, url)
+      return shell
+    }
+  }
 
   if (!self.navigator.onLine) return fallback()
 
@@ -248,8 +259,23 @@ self.addEventListener("fetch", (event) => {
         const cache = await caches.open(RUNTIME_CACHE)
         const cached = await matchRsc(request)
 
+        if (cached) {
+          if (self.navigator.onLine) {
+            void (async () => {
+              try {
+                const networkResponse = await fetchWithTimeout(request, 4000)
+                if (networkResponse.ok && !isUnsafeToCache(request, networkResponse)) {
+                  await cacheRscResponse(cache, request, networkResponse)
+                }
+              } catch {
+                // Keep the saved copy.
+              }
+            })()
+          }
+          return cached
+        }
+
         if (!self.navigator.onLine) {
-          if (cached) return cached
           return new Response(null, {
             status: 503,
             statusText: "Offline",
