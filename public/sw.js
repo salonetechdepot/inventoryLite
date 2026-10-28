@@ -1,6 +1,12 @@
-const SW_VERSION = "v15"
+const SW_VERSION = "v16"
 const STATIC_CACHE = `biva-static-${SW_VERSION}`
-const RUNTIME_CACHE = `biva-runtime-${SW_VERSION}`
+// Saved pages survive worker updates so the shop still opens offline right after one.
+// Rename only when the way pages are stored changes.
+const RUNTIME_CACHE = "biva-runtime-v15"
+// Build files have content hashes, so one cache serves every version. Pages saved
+// before an update still point at the previous build's files, which stay here.
+const ASSET_CACHE = "biva-assets"
+const ASSET_CACHE_MAX_ENTRIES = 2000
 const OFFLINE_FALLBACK_URL = "/offline.html"
 
 function normalizePath(pathname) {
@@ -27,7 +33,92 @@ const PRECACHE_URLS = [
   "/biva-logo.svg",
   "/biva-logo.jpg",
   "/manifest.webmanifest",
+  "/icon.svg",
+  "/apple-icon.png",
+  "/apple-icon.jpg",
+  "/icon-dark-32x32.png",
+  "/icon-light-32x32.png",
 ]
+
+/** Build files referenced from HTML, RSC payloads and CSS (chunk, css and font paths). */
+const BUILD_ASSET_PATTERN = /(?:\/_next\/)?static\/(?:chunks|css|media)\/[^"'\s\\)<>,]+/g
+const CSS_URL_PATTERN = /url\(\s*["']?([^"')]+)["']?\s*\)/g
+const assetsInFlight = new Set()
+
+function isBuildAsset(pathname) {
+  return pathname.startsWith("/_next/static/")
+}
+
+function discoverAssetUrls(text, baseUrl) {
+  const found = new Set()
+  for (const match of text.matchAll(BUILD_ASSET_PATTERN)) {
+    const raw = match[0]
+    found.add(raw.startsWith("/_next/") ? raw : `/_next/${raw}`)
+  }
+  if (baseUrl) {
+    for (const match of text.matchAll(CSS_URL_PATTERN)) {
+      const ref = match[1].trim()
+      if (ref.startsWith("data:")) continue
+      try {
+        const resolved = new URL(ref, baseUrl)
+        if (resolved.origin === self.location.origin && isBuildAsset(resolved.pathname)) {
+          found.add(resolved.pathname + resolved.search)
+        }
+      } catch {
+        // Not a URL.
+      }
+    }
+  }
+  return [...found]
+}
+
+async function pruneAssetCache(cache) {
+  const keys = await cache.keys()
+  const excess = keys.length - ASSET_CACHE_MAX_ENTRIES
+  if (excess <= 0) return
+  // Oldest first: files from builds that are no longer in use.
+  await Promise.all(keys.slice(0, excess + 200).map((key) => cache.delete(key)))
+}
+
+/**
+ * Save every JS / CSS / font file a page needs, so a page saved while online
+ * also runs offline (not only the files the browser happened to load).
+ */
+async function cacheAssetsReferencedBy(response, depth = 0) {
+  try {
+    const contentType = response.headers.get("content-type") || ""
+    const isCss = contentType.includes("text/css")
+    if (!contentType.includes("text/html") && !contentType.includes("text/x-component") && !isCss) {
+      return
+    }
+    const text = await response.text()
+    const urls = discoverAssetUrls(text, isCss ? response.url : null)
+    if (urls.length === 0) return
+    const cache = await caches.open(ASSET_CACHE)
+    for (const url of urls) {
+      if (assetsInFlight.has(url)) continue
+      if (await cache.match(url, { ignoreSearch: true })) continue
+      assetsInFlight.add(url)
+      try {
+        const assetResponse = await fetchWithTimeout(new Request(url), 8000)
+        if (assetResponse.ok) {
+          await cache.put(url, assetResponse.clone())
+          // Fonts and images are referenced from CSS files, one level down.
+          if (depth === 0 && url.includes("/css/")) {
+            await cacheAssetsReferencedBy(assetResponse, depth + 1)
+          }
+        }
+      } catch {
+        // Offline or slow: the next saved page tries again.
+      } finally {
+        assetsInFlight.delete(url)
+      }
+    }
+    await pruneAssetCache(cache)
+  } catch {
+    // Discovery is best-effort.
+  }
+}
 
 function rscCacheKey(pathname) {
   return `rsc:${pathname}`
@@ -45,12 +136,17 @@ function offlineHtml() {
   })
 }
 
-async function cachedAppShell(pathname) {
+/** A saved page for this tab, or null. Never the offline notice. */
+async function cachedPage(pathname) {
   for (const path of pageCachePaths(pathname)) {
     const hit = await caches.match(path)
     if (hit) return hit
   }
-  return offlineHtml()
+  return null
+}
+
+async function cachedAppShell(pathname) {
+  return (await cachedPage(pathname)) || offlineHtml()
 }
 
 /** Login HTML followed from a redirect must not be stored as the dashboard. */
@@ -71,11 +167,13 @@ function isUnsafeToCache(request, response) {
 async function cacheResponse(cache, request, response) {
   if (isUnsafeToCache(request, response)) return
   try {
+    const forAssets = response.clone()
     await cache.put(request, response.clone())
     const url = new URL(request.url)
     if (request.mode === "navigate" || url.pathname.startsWith("/dashboard")) {
       await cache.put(url.pathname, response.clone())
     }
+    void cacheAssetsReferencedBy(forAssets)
   } catch {
     // Quota or opaque response — ignore.
   }
@@ -84,9 +182,11 @@ async function cacheResponse(cache, request, response) {
 async function cacheRscResponse(cache, request, response) {
   if (isUnsafeToCache(request, response)) return
   try {
+    const forAssets = response.clone()
     const url = new URL(request.url)
     await cache.put(request, response.clone())
     await cache.put(rscCacheKey(url.pathname), response.clone())
+    void cacheAssetsReferencedBy(forAssets)
   } catch {
     // ignore
   }
@@ -106,9 +206,8 @@ async function matchRsc(request) {
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) =>
-      cache.addAll(PRECACHE_URLS).catch(() => {
-        // Precache best-effort; missing entries must not brick install.
-      })
+      // One by one: a single missing file must not leave offline.html unsaved.
+      Promise.allSettled(PRECACHE_URLS.map((url) => cache.add(url)))
     )
   )
   self.skipWaiting()
@@ -117,14 +216,23 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      const keys = await caches.keys()
-      // Drop previous runtime copies. Older workers stored Sell HTML under
-      // Products / History, and copying that forward kept every tab on Sell.
-      await Promise.all(
-        keys
-          .filter((key) => key !== STATIC_CACHE && key !== RUNTIME_CACHE)
-          .map((key) => caches.delete(key))
-      )
+      const keep = new Set([STATIC_CACHE, RUNTIME_CACHE, ASSET_CACHE])
+      const stale = (await caches.keys()).filter((key) => !keep.has(key))
+      const assets = await caches.open(ASSET_CACHE)
+      // Earlier workers kept build files in their versioned static cache. Move them,
+      // since saved pages still need them, before deleting that cache.
+      for (const key of stale) {
+        if (!key.startsWith("biva-static-")) continue
+        const old = await caches.open(key)
+        for (const request of await old.keys()) {
+          if (!isBuildAsset(new URL(request.url).pathname)) continue
+          const response = await old.match(request)
+          if (response) await assets.put(request, response)
+        }
+      }
+      // Older runtime caches stored Sell HTML under Products / History, and
+      // copying that forward kept every tab on Sell, so they are dropped.
+      await Promise.all(stale.map((key) => caches.delete(key)))
     })()
   )
   self.clients.claim()
@@ -166,18 +274,17 @@ async function networkFirstPage(request, url) {
   const isDashboard =
     url.pathname === "/" || url.pathname.startsWith("/dashboard")
 
-  if (isDashboard) {
-    const shell = cached || (await cachedAppShell(url.pathname))
-    if (shell && shell.ok) {
-      if (self.navigator.onLine) void updatePageCache(request, url)
-      return shell
-    }
+  // This exact page is saved: open it at once and refresh it in the background.
+  if (isDashboard && cached && cached.ok) {
+    if (self.navigator.onLine) void updatePageCache(request, url)
+    return cached
   }
 
   if (!self.navigator.onLine) return fallback()
 
   try {
-    const networkResponse = await fetchWithTimeout(request, 1500)
+    // A page not saved yet gets longer to load before the offline fallback.
+    const networkResponse = await fetchWithTimeout(request, isDashboard ? 4000 : 1500)
     // Navigations must not receive a followed redirect; let the browser redirect itself.
     if (networkResponse.redirected) return Response.redirect(networkResponse.url, 302)
     if (!isUnsafeToCache(request, networkResponse)) {
@@ -246,7 +353,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(RUNTIME_CACHE)
-        const cached = await matchRsc(request)
+        // The parent tab's payload is only an offline stand-in; online, load the real page.
+        const cached =
+          (await caches.match(request)) ||
+          (await caches.match(rscCacheKey(normalizePath(url.pathname))))
 
         if (cached) {
           if (self.navigator.onLine) {
@@ -265,6 +375,8 @@ self.addEventListener("fetch", (event) => {
         }
 
         if (!self.navigator.onLine) {
+          const standIn = await matchRsc(request)
+          if (standIn) return standIn
           return new Response(null, {
             status: 503,
             statusText: "Offline",
@@ -278,11 +390,10 @@ self.addEventListener("fetch", (event) => {
             await cacheRscResponse(cache, request, networkResponse)
             return networkResponse
           }
-          if (isUnsafeToCache(request, networkResponse)) return networkResponse
-          if (cached) return cached
           return networkResponse
         } catch {
-          if (cached) return cached
+          const standIn = await matchRsc(request)
+          if (standIn) return standIn
           return new Response(null, {
             status: 503,
             statusText: "Offline",
@@ -295,10 +406,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Build assets — cache first (hashed filenames). Never hang if the file isn't cached.
-  if (url.pathname.startsWith("/_next/static/")) {
+  if (isBuildAsset(url.pathname)) {
     event.respondWith(
       (async () => {
-        const cached = await caches.match(request)
+        // Hashed names: the ?dpl= deployment query does not change the file.
+        const cached = await caches.match(request, { ignoreSearch: true })
         if (cached) return cached
         if (!self.navigator.onLine) {
           return new Response("", { status: 503, statusText: "Offline" })
@@ -306,7 +418,7 @@ self.addEventListener("fetch", (event) => {
         try {
           const networkResponse = await fetchWithTimeout(request, 8000)
           if (networkResponse && networkResponse.ok) {
-            const cache = await caches.open(STATIC_CACHE)
+            const cache = await caches.open(ASSET_CACHE)
             await cache.put(request, networkResponse.clone())
           }
           return networkResponse

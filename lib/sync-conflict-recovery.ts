@@ -4,7 +4,19 @@ type MutationLike = {
   headers?: Record<string, string>
 }
 
-/** Idempotency keys — only applied when syncing online, not while queuing offline. */
+/** POSTs whose server route replays the first response for a repeated key. */
+const IDEMPOTENT_POST_URL =
+  /^\/api\/(sales\/batch|products|products\/[^/]+\/adjust|receipts\/[^/]+\/payments)$/
+
+export function needsIdempotencyKey(mutation: MutationLike) {
+  return mutation.method === "POST" && IDEMPOTENT_POST_URL.test(mutation.url)
+}
+
+/**
+ * Key for a queued change. Read it from the body as queued (before
+ * remapIdsInBody strips the `_offline*` / `_idempotencyKey` fields), so every
+ * retry of the same change sends the same key.
+ */
 export function idempotencyKeyForMutation(
   mutation: MutationLike,
   body: unknown
@@ -24,6 +36,18 @@ export function idempotencyKeyForMutation(
     if (typeof date === "string" && date.trim()) {
       return `day-close:${date.trim()}`
     }
+  }
+
+  if (mutation.url === "/api/products" && mutation.method === "POST") {
+    const tempId = payload?._offlineTempId
+    if (typeof tempId === "string" && tempId.trim()) {
+      return tempId.trim()
+    }
+  }
+
+  const key = payload?._idempotencyKey
+  if (typeof key === "string" && key.trim()) {
+    return key.trim()
   }
 
   return null

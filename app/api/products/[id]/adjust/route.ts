@@ -2,9 +2,20 @@ import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
 import { prisma } from '@/lib/prisma'
 import { formatProductResponse, productInclude } from '@/lib/format-product'
-import { parseJsonBody, quantitySchema, validateEntityRouteId } from '@/lib/api-validation'
+import {
+  idempotencyKeyFromRequest,
+  parseJsonBody,
+  validateEntityRouteId,
+} from '@/lib/api-validation'
 import { adjustProductStock } from '@/lib/warehouse'
+import {
+  findIdempotentResponse,
+  replayAfterUniqueConflict,
+  saveIdempotentResponse,
+} from '@/lib/server/idempotency'
 import { z } from 'zod'
+
+const IDEMPOTENCY_ROUTE = 'products.adjust'
 
 const stockChangeSchema = z.coerce
   .number()
@@ -28,14 +39,24 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const idempotencyKey = idempotencyKeyFromRequest(request)
+  let tenantId: string | null = null
   try {
     const sessionResult = await getApiSession()
     if (sessionResult instanceof NextResponse) return sessionResult
     const session = sessionResult
+    tenantId = session.tenantId
 
     const { id } = await params
     const invalidId = validateEntityRouteId(id)
     if (invalidId) return invalidId
+
+    const existingResponse = await findIdempotentResponse(
+      session.tenantId,
+      IDEMPOTENCY_ROUTE,
+      idempotencyKey
+    )
+    if (existingResponse) return NextResponse.json(existingResponse)
 
     const parsed = await parseJsonBody(request, stockAdjustSchema)
     if (!parsed.ok) return parsed.response
@@ -51,20 +72,25 @@ export async function POST(
     const result = await prisma.$transaction(async (tx) => {
       const next = await adjustProductStock(session.tenantId, id, parsed.data.delta, tx)
       if (next === null) return { ok: false as const }
-      return { ok: true as const }
+      const product = await tx.product.findFirstOrThrow({
+        where: { id, tenantId: session.tenantId },
+        include: productInclude,
+      })
+      const responseJson = { product: formatProductResponse(product) }
+      await saveIdempotentResponse(tx, session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey, responseJson)
+      return { ok: true as const, responseJson }
     })
 
     if (!result.ok) {
       return NextResponse.json({ error: 'Stock cannot go below zero' }, { status: 422 })
     }
 
-    const product = await prisma.product.findFirstOrThrow({
-      where: { id, tenantId: session.tenantId },
-      include: productInclude,
-    })
-
-    return NextResponse.json({ product: formatProductResponse(product) })
+    return NextResponse.json(result.responseJson)
   } catch (error) {
+    if (tenantId) {
+      const replay = await replayAfterUniqueConflict(error, tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+      if (replay) return NextResponse.json(replay)
+    }
     console.error('Adjust stock error:', error)
     return NextResponse.json({ error: 'Failed to adjust stock' }, { status: 500 })
   }

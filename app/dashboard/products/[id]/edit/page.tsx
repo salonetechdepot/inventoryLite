@@ -78,6 +78,8 @@ export default function EditProductPage() {
   const [scanCode, setScanCode] = useState("")
   const [tagsInput, setTagsInput] = useState("")
   const [hasSpecifications, setHasSpecifications] = useState(false)
+  /** Stock when the form was filled; a quantity edit is sent as the difference from this. */
+  const [loadedQuantity, setLoadedQuantity] = useState<number | null>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -99,8 +101,10 @@ export default function EditProductPage() {
   )
 
   useEffect(() => {
-    if (!productData?.product) return
+    // Fill once: a background refresh must not overwrite what the user is typing.
+    if (!productData?.product || loadedQuantity !== null) return
     const p = productData.product
+    setLoadedQuantity(p.quantity)
     setName(p.name)
     setQuantity(p.quantity.toString())
     setUnitPrice(p.unit_price.toString())
@@ -112,7 +116,7 @@ export default function EditProductPage() {
     setScanCode(p.scan_code || "")
     setTagsInput((p.tags || []).join(", "))
     setHasSpecifications(Boolean(p.has_specifications))
-  }, [productData])
+  }, [productData, loadedQuantity])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -133,9 +137,9 @@ export default function EditProductPage() {
     }
 
     try {
+      const stockChange = (parseInt(quantity) || 0) - (loadedQuantity ?? 0)
       const payload = {
         name: name.trim(),
-        quantity: parseInt(quantity) || 0,
         unitPrice: parseFloat(unitPrice) || 0,
         costPrice: costPrice.trim() ? parseFloat(costPrice) : null,
         lowStockThreshold: parseInt(lowStockThreshold) || 5,
@@ -147,18 +151,32 @@ export default function EditProductPage() {
         specifications: hasSpecifications ? specifications : null,
       }
 
-      const { queued, response, conflict } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: `/api/products/${productId}`,
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: payload,
       })
+      const { queued, response } = result
+      const conflict = "conflict" in result && result.conflict
+
+      // Stock is recorded as a change, so sales made meanwhile on other tills are kept.
+      if (stockChange !== 0) {
+        await sendOrQueueMutation({
+          url: `/api/products/${productId}/adjust`,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: { adjustment: stockChange },
+        })
+      }
 
       if (queued) {
-        toast({
-          title: "Saved offline",
-          description: "Product changes will sync when you are back online.",
-        })
+        if (!("offline" in result) || result.offline) {
+          toast({
+            title: "Saved offline",
+            description: "Product changes will sync when you are back online.",
+          })
+        }
         router.push("/dashboard/products")
         return
       }
@@ -186,16 +204,19 @@ export default function EditProductPage() {
   const handleDelete = async () => {
     setDeleting(true)
     try {
-      const { queued, response } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: `/api/products/${productId}`,
         method: "DELETE",
       })
+      const { queued, response } = result
 
       if (queued) {
-        toast({
-          title: "Delete queued",
-          description: "Product deletion will sync when online.",
-        })
+        if (!("offline" in result) || result.offline) {
+          toast({
+            title: "Delete queued",
+            description: "Product deletion will sync when online.",
+          })
+        }
         router.push("/dashboard/products")
         return
       }

@@ -102,18 +102,22 @@ export default function NewProductPage() {
         hasSpecifications,
       }
 
-      const { queued, response, conflict } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: "/api/products",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
       })
+      const { queued, response } = result
+      const conflict = "conflict" in result && result.conflict
 
       if (queued) {
-        toast({
-          title: "Saved offline",
-          description: "Product will be created when connection is restored.",
-        })
+        if (!("offline" in result) || result.offline) {
+          toast({
+            title: "Saved offline",
+            description: "Product will be created when connection is restored.",
+          })
+        }
         router.push("/dashboard/products")
         return
       }

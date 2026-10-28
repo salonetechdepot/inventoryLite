@@ -158,17 +158,23 @@ export default function DayClosePage() {
         notes: notes.trim() || null,
       }
 
-      const { queued, response, conflict } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: "/api/day-close",
         method: "POST",
         body,
       })
+      const { queued, response } = result
+      const conflict = "conflict" in result && result.conflict
 
       if (queued) {
-        toast({
-          title: "Day close saved offline",
-          description: "Counts are on this device and will sync when you are back online.",
-        })
+        toast(
+          !("offline" in result) || result.offline
+            ? {
+                title: "Day close saved offline",
+                description: "Counts are on this device and will sync when you are back online.",
+              }
+            : { title: "Day closed", description: "Counts saved. Sending to the server now." }
+        )
         await mutate()
         return
       }

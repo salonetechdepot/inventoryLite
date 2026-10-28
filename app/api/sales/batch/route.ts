@@ -23,7 +23,14 @@ import { validateReturnAgainstOriginalReceipt } from '@/lib/return-from-sale'
 import { parseSpecifications, saleLineProductName } from '@/lib/product-specifications'
 import { resolveCheckoutPayment } from '@/lib/checkout-payment'
 import { describeDbError } from '@/lib/db-error'
+import {
+  findIdempotentResponse,
+  replayAfterUniqueConflict,
+  saveIdempotentResponse,
+} from '@/lib/server/idempotency'
 import { z } from 'zod'
+
+const IDEMPOTENCY_ROUTE = 'sales.batch'
 
 interface SaleItem {
   productId: string
@@ -65,26 +72,17 @@ class InsufficientStockError extends Error {
 
 // POST record a checkout (cart -> single Receipt with multiple Sale lines + initial Payment)
 export async function POST(request: Request) {
+  const idempotencyKey = idempotencyKeyFromRequest(request)
+  let tenantId: string | null = null
   try {
     const sessionResult = await getApiSession()
     if (sessionResult instanceof NextResponse) return sessionResult
     const session = sessionResult
+    tenantId = session.tenantId
 
-    const idempotencyKey = idempotencyKeyFromRequest(request)
-    if (idempotencyKey) {
-      const existing = await prisma.idempotencyKey.findUnique({
-        where: {
-          tenantId_route_key: {
-            tenantId: session.tenantId,
-            route: 'sales.batch',
-            key: idempotencyKey,
-          },
-        },
-        select: { responseJson: true },
-      })
-      if (existing) {
-        return NextResponse.json(existing.responseJson)
-      }
+    const existing = await findIdempotentResponse(session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+    if (existing) {
+      return NextResponse.json(existing)
     }
 
     const parsed = await parseJsonBody(request, batchSaleSchema)
@@ -322,16 +320,13 @@ export async function POST(request: Request) {
         itemCount: items.length,
       }
 
-      if (idempotencyKey) {
-        await tx.idempotencyKey.create({
-          data: {
-            tenantId: session.tenantId,
-            route: 'sales.batch',
-            key: idempotencyKey,
-            responseJson: responseJson as Prisma.InputJsonValue,
-          },
-        })
-      }
+      await saveIdempotentResponse(
+        tx,
+        session.tenantId,
+        IDEMPOTENCY_ROUTE,
+        idempotencyKey,
+        responseJson
+      )
 
       return responseJson
     })
@@ -340,6 +335,10 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof InsufficientStockError) {
       return NextResponse.json({ error: error.message }, { status: 409 })
+    }
+    if (tenantId) {
+      const replay = await replayAfterUniqueConflict(error, tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+      if (replay) return NextResponse.json(replay)
     }
     console.error('Batch sale error:', error)
     return NextResponse.json(

@@ -13,10 +13,18 @@ import {
   type SyncQueueResult,
 } from "@/lib/offline-sync"
 
-/** Retry waiting changes while online, without the cashier tapping anything. */
-const AUTO_RETRY_MS = 60_000
+/** First retry after a failed send; doubles on each failure up to MAX_RETRY_MS. */
+const BASE_RETRY_MS = 5_000
+const MAX_RETRY_MS = 5 * 60_000
 
-type SyncReason = "online" | "mount" | "manual" | "auto"
+/** "enqueue" = a change was just saved on this device; sent quietly in the background. */
+type SyncReason = "online" | "mount" | "manual" | "auto" | "enqueue"
+
+function retryDelay(failures: number) {
+  const ceiling = Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** Math.max(0, failures - 1))
+  // Jitter so several tills do not all retry at the same instant after an outage.
+  return ceiling / 2 + Math.random() * (ceiling / 2)
+}
 
 async function refreshCounts(
   setQueueCount: (n: number) => void,
@@ -39,67 +47,118 @@ export function OfflineSync({ onSignInRequired }: Props) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [blockedBy, setBlockedBy] = useState<SyncQueueResult["blockedBy"]>()
   const syncingRef = useRef(false)
+  const rerunRef = useRef(false)
+  const failuresRef = useRef(0)
+  const retryTimerRef = useRef<number | null>(null)
+  const runSyncRef = useRef<(reason: SyncReason) => Promise<void>>(async () => {})
 
-  const runSync = useCallback(async (reason: SyncReason) => {
-    if (syncingRef.current) return
-    if (!navigator.onLine) return
-
-    const pending = await getQueuedMutationCount()
-    setQueueCount(pending)
-    if (pending === 0) {
-      setBlockedBy(undefined)
-      return
+  const clearRetry = () => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current)
+      retryTimerRef.current = null
     }
+  }
 
-    syncingRef.current = true
-    setIsSyncing(true)
-
-    // Brief delay after reconnect so the network stack is ready.
-    if (reason === "online") {
-      await new Promise((resolve) => setTimeout(resolve, 800))
-    }
-
-    try {
-      const result = await processOfflineQueue()
-      await refreshCounts(setQueueCount, setConflictCount)
-      setBlockedBy(result.blockedBy)
-
-      if (result.synced > 0) {
-        toast({
-          title: "Sync complete",
-          description: `${result.synced} waiting change(s) sent.`,
-        })
-      }
-
-      if (result.conflicts > 0) {
-        toast({
-          title: "Some changes need review",
-          description: result.lastError || `${result.conflicts} change(s) need review.`,
-          variant: "destructive",
-        })
-        return
-      }
-
-      if (result.blockedBy === "sign_in" && reason !== "auto") {
-        toast({
-          title: "Sign in to sync",
-          description: "Your waiting sales are safe on this device. Sign in again to send them.",
-        })
-        return
-      }
-
-      // Background retries stay quiet; only a tap reports a temporary problem.
-      if (reason === "manual" && result.failed > 0 && result.synced === 0) {
-        toast({
-          title: "Not sent yet",
-          description: result.lastError || `${result.failed} change(s) still waiting.`,
-        })
-      }
-    } finally {
-      syncingRef.current = false
-      setIsSyncing(false)
-    }
+  const scheduleRetry = useCallback((delayMs: number) => {
+    clearRetry()
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null
+      void runSyncRef.current("auto")
+    }, delayMs)
   }, [])
+
+  const runSync = useCallback(
+    async (reason: SyncReason) => {
+      if (syncingRef.current) {
+        // Changes saved while a send is running go out right after it.
+        if (reason === "enqueue") rerunRef.current = true
+        return
+      }
+      if (!navigator.onLine) return
+
+      const pending = await getQueuedMutationCount()
+      setQueueCount(pending)
+      if (pending === 0) {
+        failuresRef.current = 0
+        setBlockedBy(undefined)
+        return
+      }
+
+      syncingRef.current = true
+      rerunRef.current = false
+      setIsSyncing(true)
+      clearRetry()
+
+      // Brief delay after reconnect so the network stack is ready.
+      if (reason === "online") {
+        await new Promise((resolve) => setTimeout(resolve, 800))
+      }
+
+      let result: SyncQueueResult | null = null
+      try {
+        result = await processOfflineQueue()
+        await refreshCounts(setQueueCount, setConflictCount)
+        setBlockedBy(result.blockedBy)
+
+        if (result.synced > 0 && reason !== "enqueue") {
+          toast({
+            title: "Sync complete",
+            description: `${result.synced} waiting change(s) sent.`,
+          })
+        }
+
+        if (result.conflicts > 0) {
+          toast({
+            title: "Some changes need review",
+            description: result.lastError || `${result.conflicts} change(s) need review.`,
+            variant: "destructive",
+          })
+        } else if (result.blockedBy === "sign_in" && (reason === "manual" || reason === "online")) {
+          toast({
+            title: "Sign in to sync",
+            description: "Your waiting sales are safe on this device. Sign in again to send them.",
+          })
+        } else if (reason === "manual" && result.failed > 0 && result.synced === 0) {
+          // Background retries stay quiet; only a tap reports a temporary problem.
+          toast({
+            title: "Not sent yet",
+            description: result.lastError || `${result.failed} change(s) still waiting.`,
+          })
+        }
+      } catch {
+        result = { synced: 0, failed: 1, conflicts: 0, blockedBy: "network" }
+      } finally {
+        syncingRef.current = false
+        setIsSyncing(false)
+      }
+
+      if (result.blockedBy === "network" || result.blockedBy === "server") {
+        failuresRef.current += 1
+        scheduleRetry(retryDelay(failuresRef.current))
+        return
+      }
+      if (result.blockedBy) {
+        // Sign-in or account lock: nothing to gain from retrying quickly.
+        scheduleRetry(MAX_RETRY_MS)
+        return
+      }
+      const stillPending = (await getQueuedMutationCount()) > 0
+      if (stillPending && result.synced === 0 && result.conflicts === 0) {
+        failuresRef.current += 1
+        scheduleRetry(retryDelay(failuresRef.current))
+        return
+      }
+      failuresRef.current = 0
+      if (rerunRef.current || stillPending) {
+        scheduleRetry(300)
+      }
+    },
+    [scheduleRetry]
+  )
+
+  useEffect(() => {
+    runSyncRef.current = runSync
+  }, [runSync])
 
   useEffect(() => {
     const init = async () => {
@@ -116,17 +175,18 @@ export function OfflineSync({ onSignInRequired }: Props) {
       void refreshCounts(setQueueCount, setConflictCount)
       void runSync("auto")
     }
-    const onQueueChanged = () => {
+    const onQueueChanged = (event: Event) => {
       void refreshCounts(setQueueCount, setConflictCount)
+      const enqueued = (event as CustomEvent<{ enqueued?: boolean } | undefined>).detail?.enqueued
+      if (enqueued && navigator.onLine) void runSync("enqueue")
     }
-    const intervalId = window.setInterval(() => void runSync("auto"), AUTO_RETRY_MS)
 
     window.addEventListener("focus", onResume)
     document.addEventListener("visibilitychange", onResume)
     window.addEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged)
 
     return () => {
-      window.clearInterval(intervalId)
+      clearRetry()
       window.removeEventListener("focus", onResume)
       document.removeEventListener("visibilitychange", onResume)
       window.removeEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged)
@@ -136,6 +196,7 @@ export function OfflineSync({ onSignInRequired }: Props) {
   useEffect(() => {
     const updateOfflineState = async () => {
       setIsOnline(false)
+      clearRetry()
       await refreshCounts(setQueueCount, setConflictCount)
       toast({
         title: "Offline mode",
@@ -145,6 +206,7 @@ export function OfflineSync({ onSignInRequired }: Props) {
 
     const syncWhenOnline = async () => {
       setIsOnline(true)
+      failuresRef.current = 0
       await refreshCounts(setQueueCount, setConflictCount)
       void runSync("online")
     }
@@ -158,8 +220,7 @@ export function OfflineSync({ onSignInRequired }: Props) {
     }
   }, [runSync])
 
-  if (isOnline && queueCount === 0 && conflictCount === 0 && !isSyncing) return null
-
+  const idle = isOnline && queueCount === 0 && conflictCount === 0 && !isSyncing
   const needsSignIn = isOnline && !isSyncing && queueCount > 0 && blockedBy === "sign_in"
 
   const badgeLabel = !isOnline
@@ -167,12 +228,14 @@ export function OfflineSync({ onSignInRequired }: Props) {
       ? `Offline — ${queueCount} waiting`
       : "Offline"
     : isSyncing
-      ? "Syncing…"
+      ? `Syncing ${queueCount}…`
       : needsSignIn
         ? `Sign in to sync ${queueCount}`
         : queueCount > 0
           ? `${queueCount} waiting — tap to sync`
-          : `${conflictCount} to review — tap to open`
+          : conflictCount > 0
+            ? `${conflictCount} to review — tap to open`
+            : "Online — all synced"
 
   const handleBadgeClick = () => {
     if (!isOnline || isSyncing) return
@@ -181,6 +244,7 @@ export function OfflineSync({ onSignInRequired }: Props) {
       return
     }
     if (queueCount > 0) {
+      failuresRef.current = 0
       void runSync("manual")
       return
     }
@@ -192,12 +256,21 @@ export function OfflineSync({ onSignInRequired }: Props) {
   return (
     <button
       type="button"
-      className="fixed left-1/2 top-3 z-50 -translate-x-1/2"
+      className="fixed left-1/2 top-3 z-50 -translate-x-1/2 print:hidden"
       onClick={handleBadgeClick}
       disabled={!isOnline || isSyncing || (queueCount === 0 && conflictCount === 0)}
       aria-label={badgeLabel}
+      aria-live="polite"
     >
-      <Badge variant="secondary" className="px-3 py-1 text-xs shadow cursor-pointer">
+      <Badge
+        variant={idle ? "outline" : "secondary"}
+        className={
+          idle
+            ? "bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground"
+            : "px-3 py-1 text-xs shadow cursor-pointer"
+        }
+      >
+        {idle && <span className="mr-1 inline-block size-1.5 rounded-full bg-green-600" aria-hidden />}
         {!isOnline && <CloudOff className="mr-1 size-3" />}
         {isOnline && isSyncing && <RefreshCw className="mr-1 size-3 animate-spin" />}
         {needsSignIn && <LogIn className="mr-1 size-3" />}

@@ -2,7 +2,22 @@
 
 import { useEffect } from "react"
 
+/** Ask the browser not to evict IndexedDB (unsent sales) when the phone runs low on space. */
+async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage?.persist) return
+    if (await navigator.storage.persisted()) return
+    await navigator.storage.persist()
+  } catch {
+    // Not supported or refused: data stays but may be evicted under storage pressure.
+  }
+}
+
 export function PwaProvider() {
+  useEffect(() => {
+    void requestPersistentStorage()
+  }, [])
+
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return
 

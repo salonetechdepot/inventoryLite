@@ -691,6 +691,8 @@ function SellPageContent() {
       const { queued, response } = result
       const serverError = "serverError" in result ? result.serverError : undefined
       const needsSignIn = "needsSignIn" in result && result.needsSignIn
+      const localId = "localId" in result ? result.localId : undefined
+      const savedOffline = "offline" in result ? result.offline : queued
 
       if (!queued && !response?.ok) {
         const data = await response?.json().catch(() => null)
@@ -753,9 +755,9 @@ function SellPageContent() {
       }
 
       if (!receipt) {
-        // Offline / fallback: synthesize a receipt from the cart so we can still print
+        // Saved on this device first: build the receipt from the cart so it prints at once
         receipt = {
-          id: `pending-${Date.now()}`,
+          id: localId ?? `pending-${Date.now()}`,
           type: transactionType,
           customer_name: customerName.trim() || null,
           customer_phone: customerPhone.trim() || null,
@@ -811,7 +813,7 @@ function SellPageContent() {
       }
 
       setLastReceipt(receipt)
-      setLastReceiptOffline(Boolean(queued))
+      setLastReceiptOffline(Boolean(savedOffline))
       setShowReceipt(true)
       setShowCustomerFields(false)
       clearCart()
@@ -829,7 +831,7 @@ function SellPageContent() {
           description: `${serverError} It will retry automatically; if it keeps failing, open Sync conflicts.`,
           variant: "destructive",
         })
-      } else if (queued) {
+      } else if (queued && savedOffline) {
         toast({
           title: "Sale saved offline",
           description: "It will be sent automatically when the connection is back.",

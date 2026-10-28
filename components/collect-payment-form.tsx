@@ -75,10 +75,17 @@ export function CollectPaymentForm({
       })
 
       if (result.queued) {
-        toast({
-          title: "Payment saved offline",
-          description: "It will sync when you are back online.",
-        })
+        toast(
+          !("offline" in result) || result.offline
+            ? {
+                title: "Payment saved offline",
+                description: "It will sync when you are back online.",
+              }
+            : {
+                title: "Payment recorded",
+                description: `NLe ${formatCurrency(Math.min(amount, due))} collected.`,
+              }
+        )
         setPaymentAmount("")
         setPaymentNote("")
         onQueued?.()

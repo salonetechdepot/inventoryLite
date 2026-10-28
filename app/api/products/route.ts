@@ -9,17 +9,25 @@ import {
 import { parseSpecifications } from '@/lib/product-specifications'
 import {
   entityIdSchema,
+  idempotencyKeyFromRequest,
   moneySchema,
   parseJsonBody,
   quantitySchema,
   trimmedString,
 } from '@/lib/api-validation'
+import {
+  findIdempotentResponse,
+  replayAfterUniqueConflict,
+  saveIdempotentResponse,
+} from '@/lib/server/idempotency'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { isValidScanCode } from '@/lib/scan-code'
 import { newEntityId } from '@/lib/entity-id'
 import { ensureDefaultWarehouse, setProductStock } from '@/lib/warehouse'
 import { assertProductCategoryChoice } from '@/lib/product-category-choice'
+
+const IDEMPOTENCY_ROUTE = 'products.create'
 
 const productCreateSchema = z.object({
   name: trimmedString(255),
@@ -65,10 +73,16 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const idempotencyKey = idempotencyKeyFromRequest(request)
+  let tenantId: string | null = null
   try {
     const sessionResult = await getApiSession()
     if (sessionResult instanceof NextResponse) return sessionResult
     const session = sessionResult
+    tenantId = session.tenantId
+
+    const existing = await findIdempotentResponse(session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+    if (existing) return NextResponse.json(existing)
 
     const parsed = await parseJsonBody(request, productCreateSchema)
     if (!parsed.ok) return parsed.response
@@ -101,7 +115,7 @@ export async function POST(request: Request) {
     const barcode = scanCode?.trim() || `LITE-${productId.slice(0, 12)}`
     const sku = barcode
 
-    const product = await prisma.$transaction(async (tx) => {
+    const response = await prisma.$transaction(async (tx) => {
       await tx.product.create({
         data: {
           ...defaultProductCreateFields({
@@ -131,16 +145,21 @@ export async function POST(request: Request) {
 
       const warehouse = await ensureDefaultWarehouse(session.tenantId, tx)
       await setProductStock(session.tenantId, productId, warehouse.id, quantity, tx)
-      return tx.product.findFirstOrThrow({
+      const created = await tx.product.findFirstOrThrow({
         where: { id: productId },
         include: productInclude,
       })
+      const responseJson = { product: formatProductResponse(created) }
+      await saveIdempotentResponse(tx, session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey, responseJson)
+      return responseJson
     })
 
-    return NextResponse.json({
-      product: formatProductResponse(product),
-    })
+    return NextResponse.json(response)
   } catch (error) {
+    if (tenantId) {
+      const replay = await replayAfterUniqueConflict(error, tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+      if (replay) return NextResponse.json(replay)
+    }
     console.error('Create product error:', error)
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

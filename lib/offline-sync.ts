@@ -26,10 +26,18 @@ import {
 import {
   isStaleProductMutation,
   mergeSyncHeaders,
+  needsIdempotencyKey,
 } from "@/lib/sync-conflict-recovery"
+import {
+  deleteCached,
+  localDb,
+  PRODUCTS_CACHE_KEY,
+  readCached,
+  RETURN_RECEIPTS_CACHE_KEY,
+  SALE_RECEIPTS_CACHE_KEY,
+  writeCached,
+} from "@/lib/local-db"
 
-const DB_NAME = "biva-offline-db"
-const DB_VERSION = 1
 const CACHE_STORE = "cache"
 const QUEUE_STORE = "queue"
 const CONFLICT_STORE = "conflicts"
@@ -50,11 +58,8 @@ function fetchWithDeadline(
     clearTimeout(timer)
   )
 }
-const PRODUCTS_CACHE_KEY = "/api/products"
-export { PRODUCTS_CACHE_KEY }
 /** Stable SWR keys — filters are client-side so offline cache always hits. */
-export const RETURN_RECEIPTS_CACHE_KEY = "/api/receipts?type=return&limit=500&status=all"
-export const SALE_RECEIPTS_CACHE_KEY = "/api/receipts?type=sale&limit=500&status=all"
+export { PRODUCTS_CACHE_KEY, RETURN_RECEIPTS_CACHE_KEY, SALE_RECEIPTS_CACHE_KEY }
 export const CATEGORIES_CACHE_KEY = "/api/categories"
 export const DASHBOARD_STATS_CACHE_KEY = "/api/dashboard/stats"
 export const ANALYTICS_CACHE_KEY = "/api/analytics"
@@ -214,12 +219,6 @@ export interface SyncConflict {
   tenantId?: string | null
 }
 
-interface CachedRecord {
-  key: string
-  data: unknown
-  updatedAt: number
-}
-
 interface ProductShape {
   id: string
   name: string
@@ -244,67 +243,25 @@ function isBrowser() {
   return typeof window !== "undefined"
 }
 
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+type StoreName = typeof CACHE_STORE | typeof QUEUE_STORE | typeof CONFLICT_STORE
 
-    request.onupgradeneeded = () => {
-      const db = request.result
-
-      if (!db.objectStoreNames.contains(CACHE_STORE)) {
-        db.createObjectStore(CACHE_STORE, { keyPath: "key" })
-      }
-
-      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
-        db.createObjectStore(QUEUE_STORE, { keyPath: "id" })
-      }
-
-      if (!db.objectStoreNames.contains(CONFLICT_STORE)) {
-        db.createObjectStore(CONFLICT_STORE, { keyPath: "id" })
-      }
-    }
-
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
+async function getAllFromStore<T>(storeName: Exclude<StoreName, typeof CACHE_STORE>): Promise<T[]> {
+  return (await localDb().table(storeName).toArray()) as T[]
 }
 
-function idbRequest<T = unknown>(request: IDBRequest<T>) {
-  return new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
+async function putIntoStore(
+  storeName: Exclude<StoreName, typeof CACHE_STORE>,
+  value: QueuedMutation | SyncConflict
+) {
+  await localDb().table(storeName).put(value)
 }
 
-function txDone(transaction: IDBTransaction) {
-  return new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve()
-    transaction.onerror = () => reject(transaction.error)
-    transaction.onabort = () => reject(transaction.error)
-  })
-}
-
-async function getAllFromStore<T>(storeName: string): Promise<T[]> {
-  const db = await openDb()
-  const tx = db.transaction(storeName, "readonly")
-  const store = tx.objectStore(storeName)
-  const all = await idbRequest(store.getAll())
-  await txDone(tx)
-  return all as T[]
-}
-
-async function putIntoStore(storeName: string, value: unknown) {
-  const db = await openDb()
-  const tx = db.transaction(storeName, "readwrite")
-  tx.objectStore(storeName).put(value)
-  await txDone(tx)
-}
-
-async function deleteFromStore(storeName: string, id: string) {
-  const db = await openDb()
-  const tx = db.transaction(storeName, "readwrite")
-  tx.objectStore(storeName).delete(id)
-  await txDone(tx)
+async function deleteFromStore(storeName: StoreName, id: string) {
+  if (storeName === CACHE_STORE) {
+    await deleteCached(id)
+    return
+  }
+  await localDb().table(storeName).delete(id)
 }
 
 function parseProductIdFromUrl(url: string): string | null {
@@ -1087,6 +1044,10 @@ function remapIdsInBody(body: unknown, idMap: Record<string, string>) {
     delete clone._offlineReceiptId
   }
 
+  if (clone._idempotencyKey !== undefined) {
+    delete clone._idempotencyKey
+  }
+
   if (Array.isArray(clone.items)) {
     clone.items = clone.items.map((item) => {
       if (!item || typeof item !== "object") return item
@@ -1123,10 +1084,65 @@ async function applyCreateSyncResolution(mutation: QueuedMutation, response: Res
   }
 }
 
-function mergeProductsPreservingLocal(serverData: unknown, existingData: unknown) {
+/** Stock changes still waiting in the outbox, per product (server id once known). */
+async function pendingStockDeltas(): Promise<Map<string, number>> {
+  const [queue, tenantId, idMap] = await Promise.all([
+    getQueue(),
+    currentTenantId(),
+    getCachedData<Record<string, string>>(SYNC_ID_MAP_CACHE_KEY),
+  ])
+  const deltas = new Map<string, number>()
+  const add = (rawId: unknown, delta: number) => {
+    const localId = String(rawId ?? "")
+    if (!localId || !Number.isFinite(delta) || delta === 0) return
+    const id = idMap?.[localId] ?? localId
+    deltas.set(id, (deltas.get(id) ?? 0) + delta)
+  }
+
+  for (const mutation of queue) {
+    if (!belongsToTenant(mutation, tenantId) || mutation.method !== "POST") continue
+    const payload =
+      mutation.body && typeof mutation.body === "object"
+        ? (mutation.body as Record<string, unknown>)
+        : {}
+
+    if (mutation.url === "/api/sales/batch") {
+      const isReturn = payload.type === "return"
+      const items = Array.isArray(payload.items) ? (payload.items as BatchCartItem[]) : []
+      for (const item of items) {
+        const qty = Number(item.quantity ?? 0)
+        add(
+          item.productId,
+          isReturn
+            ? restockQuantityForLine(qty, item.returnDisposition as ReturnDisposition | undefined)
+            : -qty
+        )
+      }
+      continue
+    }
+
+    const adjustId = parseAdjustProductIdFromUrl(mutation.url)
+    if (adjustId) add(adjustId, Number(payload.adjustment ?? payload.delta ?? 0))
+  }
+  return deltas
+}
+
+/** Server totals do not include changes still in the outbox; add them back before merging. */
+async function withPendingStock<T extends { id: string; quantity: number }>(
+  serverProducts: T[]
+): Promise<T[]> {
+  const deltas = await pendingStockDeltas()
+  if (deltas.size === 0) return serverProducts
+  return serverProducts.map((product) => {
+    const delta = deltas.get(product.id)
+    return delta ? { ...product, quantity: Number(product.quantity ?? 0) + delta } : product
+  })
+}
+
+async function mergeProductsPreservingLocal(serverData: unknown, existingData: unknown) {
   const incoming = (serverData as { products?: ProductShape[] })?.products
   const existing = (existingData as { products?: ProductShape[] })?.products
-  const serverProducts = Array.isArray(incoming) ? incoming : []
+  const serverProducts = await withPendingStock(Array.isArray(incoming) ? incoming : [])
   const currentProducts = Array.isArray(existing) ? existing : []
   return {
     products: mergeProductSync(
@@ -1139,27 +1155,13 @@ function mergeProductsPreservingLocal(serverData: unknown, existingData: unknown
 
 export async function cacheData<T>(key: string, data: T) {
   if (!isBrowser()) return
-  await putIntoStore(CACHE_STORE, {
-    key,
-    data,
-    updatedAt: Date.now(),
-  } satisfies CachedRecord)
+  await writeCached(key, data)
 }
 
 export async function getCachedData<T>(key: string): Promise<T | null> {
   if (!isBrowser()) return null
-
-  const db = await openDb()
-  const tx = db.transaction(CACHE_STORE, "readonly")
-  const store = tx.objectStore(CACHE_STORE)
-  const record = (await idbRequest(store.get(key))) as CachedRecord | undefined
-  await txDone(tx)
-
-  if (!record) {
-    return null
-  }
-
-  return record.data as T
+  const record = await readCached<T>(key)
+  return record ? record.data : null
 }
 
 /** Quantities still returnable, using saved sales and returns when the API is unreachable. */
@@ -1211,11 +1213,7 @@ export async function loadReturnableFromCache(receiptId: string): Promise<{
 
 export async function getCacheUpdatedAt(key: string): Promise<number | null> {
   if (!isBrowser()) return null
-  const db = await openDb()
-  const tx = db.transaction(CACHE_STORE, "readonly")
-  const store = tx.objectStore(CACHE_STORE)
-  const record = (await idbRequest(store.get(key))) as CachedRecord | undefined
-  await txDone(tx)
+  const record = await readCached(key)
   return record?.updatedAt ?? null
 }
 
@@ -1415,9 +1413,21 @@ async function rollbackOptimisticMutation(input: {
     return
   }
 
+  // Local-only products survive every server merge, so a rejected create must be removed here.
+  if (input.url === "/api/products" && input.method === "POST") {
+    const tempId = payload._offlineTempId ? String(payload._offlineTempId) : null
+    if (tempId) {
+      await withProductsCache((products) => products.filter((product) => product.id !== tempId))
+      await mutate(PRODUCTS_CACHE_KEY, await getCachedData(PRODUCTS_CACHE_KEY), {
+        revalidate: false,
+      })
+    }
+    return
+  }
+
   if (parseReceiptPaymentUrl(input.url) && input.method === "POST" && navigator.onLine) {
     try {
-      const fresh = await fetchWithOfflineCache(SALE_RECEIPTS_CACHE_KEY)
+      const fresh = await fetchNetworkFirst(SALE_RECEIPTS_CACHE_KEY)
       await mutate(SALE_RECEIPTS_CACHE_KEY, fresh, { revalidate: false })
     } catch {
       // Keep the cache; the next sync replaces it.
@@ -1474,7 +1484,9 @@ async function enqueueMutation(
     retryCount: 0,
     tenantId: await currentTenantId(),
   } satisfies QueuedMutation)
-  window.dispatchEvent(new CustomEvent(OFFLINE_QUEUE_CHANGED_EVENT))
+  window.dispatchEvent(
+    new CustomEvent(OFFLINE_QUEUE_CHANGED_EVENT, { detail: { enqueued: true } })
+  )
 }
 
 async function markConflict(mutation: QueuedMutation, status: number, reason: string) {
@@ -1654,7 +1666,7 @@ async function refreshOfflineDataViaIndividualFetches(): Promise<boolean> {
   let ok = 0
   for (const key of OFFLINE_DATA_CACHE_KEYS) {
     try {
-      await fetchWithOfflineCache(key)
+      await fetchNetworkFirst(key)
       ok += 1
     } catch {
       // continue — partial cache is better than none
@@ -1714,7 +1726,7 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
         ?.products ?? []
     const mergedProducts = mergeProductSync(
       existingProducts,
-      payload.products,
+      await withPendingStock(payload.products),
       payload.full
     )
     await cacheData(PRODUCTS_CACHE_KEY, { products: mergedProducts })
@@ -1755,7 +1767,7 @@ async function performDeltaSync(options?: { full?: boolean }): Promise<DeltaSync
     await mutate(DASHBOARD_STATS_CACHE_KEY, payload.stats, { revalidate: false })
 
     try {
-      await fetchWithOfflineCache(ANALYTICS_CACHE_KEY)
+      await fetchNetworkFirst(ANALYTICS_CACHE_KEY)
     } catch {
       // Reports can stay on the last saved copy if this request fails.
     }
@@ -1855,70 +1867,141 @@ async function readFromOfflineCache<T>(cacheKey: string): Promise<T> {
   return {} as T
 }
 
+const backgroundRefreshes = new Map<string, Promise<void>>()
+
+/** Update the device copy from the server, then hand the new data to SWR. */
+function refreshInBackground(url: string) {
+  if (backgroundRefreshes.has(url)) return
+  const run = fetchFromNetworkAndCache<unknown>(url, FETCH_DEADLINE_MS)
+    .then(async (data) => {
+      await mutate(url, await withLocalProductQuantity(url, data), { revalidate: false })
+    })
+    .catch(() => {
+      // Keep showing the device copy; the next read tries again.
+    })
+    .finally(() => backgroundRefreshes.delete(url))
+  backgroundRefreshes.set(url, run)
+}
+
+/**
+ * Product detail from the server does not include sales still in the outbox;
+ * the products list on this device does, so its stock wins.
+ */
+async function withLocalProductQuantity<T>(url: string, data: T): Promise<T> {
+  const match = url.match(/^\/api\/products\/([^/?]+)$/)
+  const product = (data as { product?: ProductShape } | null)?.product
+  if (!match || !product) return data
+  const list = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
+  const local = list?.products?.find((p) => p.id === match[1])
+  if (!local || local.quantity === product.quantity) return data
+  return { ...data, product: { ...product, quantity: local.quantity } }
+}
+
+/**
+ * SWR fetcher. Local first: when this device has a copy it is returned at once
+ * and refreshed in the background, so screens never wait on a slow or dead
+ * connection. Sign-in state is the exception and still asks the server first.
+ */
 export async function fetchWithOfflineCache<T>(url: string): Promise<T> {
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true
-  const cacheKey = url
 
   if (!isOnline) {
-    return readFromOfflineCache<T>(cacheKey)
+    return withLocalProductQuantity(url, await readFromOfflineCache<T>(url))
   }
 
-  const cached = await getCachedData<T>(cacheKey)
+  const cached = await getCachedData<T>(url)
+  if (cached !== null && url !== SESSION_CACHE_KEY) {
+    refreshInBackground(url)
+    return withLocalProductQuantity(url, cached)
+  }
+
+  return withLocalProductQuantity(url, await fetchNetworkFirst<T>(url, cached))
+}
+
+/** Server copy when reachable (short wait if a device copy exists), else the device copy. */
+async function fetchNetworkFirst<T>(url: string, cached?: T | null): Promise<T> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return readFromOfflineCache<T>(url)
+  }
+  const existing = cached === undefined ? await getCachedData<T>(url) : cached
   const cachedSessionSignedOut =
-    cacheKey === SESSION_CACHE_KEY &&
-    cached !== null &&
-    !(cached as SessionBackup).user
+    url === SESSION_CACHE_KEY && existing !== null && !(existing as SessionBackup).user
   const deadline =
-    cached !== null && !cachedSessionSignedOut
-      ? CACHED_FETCH_DEADLINE_MS
-      : FETCH_DEADLINE_MS
-
+    existing !== null && !cachedSessionSignedOut ? CACHED_FETCH_DEADLINE_MS : FETCH_DEADLINE_MS
   try {
-    const res = await fetchWithDeadline(url, { credentials: "same-origin" }, deadline)
-    if (!res.ok || isOfflineGatewayResponse(res)) {
-      throw new Error(`Failed request (${res.status})`)
-    }
-    const data = (await res.json()) as T
-
-    if (cacheKey === SESSION_CACHE_KEY) {
-      const sessionData = data as SessionBackup & { locked?: boolean }
-      if (sessionData.locked) {
-        await clearSessionBackup()
-        await cacheData(cacheKey, data)
-        return data as T
-      }
-      if (sessionData.user && shouldClearStoredSession(sessionData.sessionExpiresAt)) {
-        await clearSessionBackup()
-        return { user: null, sessionExpiresAt: null } as T
-      }
-      persistSessionBackup(sessionData)
-    }
-    if (cacheKey === PRODUCTS_CACHE_KEY) {
-      const previous = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
-      const merged = mergeProductsPreservingLocal(data, previous)
-      await cacheData(cacheKey, merged as T)
-      return merged as T
-    }
-
-    if (cacheKey === RETURN_RECEIPTS_CACHE_KEY) {
-      const previous = await getCachedData<{ receipts: CachedReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)
-      const merged = mergeReturnReceiptsPreservingLocal(data, previous)
-      await cacheData(cacheKey, merged as T)
-      return merged as T
-    }
-
-    if (cacheKey === SALE_RECEIPTS_CACHE_KEY) {
-      const previous = await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY)
-      const merged = mergeSaleReceiptsPreservingLocal(data, previous)
-      await cacheData(cacheKey, merged as T)
-      return merged as T
-    }
-
-    await cacheData(cacheKey, data)
-    return data
+    return await fetchFromNetworkAndCache<T>(url, deadline)
   } catch {
-    return readFromOfflineCache<T>(cacheKey)
+    return readFromOfflineCache<T>(url)
   }
+}
+
+/** Throws when the server cannot be reached or answers with a gateway / portal page. */
+async function fetchFromNetworkAndCache<T>(url: string, deadline: number): Promise<T> {
+  const cacheKey = url
+  const res = await fetchWithDeadline(url, { credentials: "same-origin" }, deadline)
+  if (!res.ok || isOfflineGatewayResponse(res)) {
+    throw new Error(`Failed request (${res.status})`)
+  }
+  const data = (await res.json()) as T
+
+  if (cacheKey === SESSION_CACHE_KEY) {
+    const sessionData = data as SessionBackup & { locked?: boolean }
+    if (sessionData.locked) {
+      await clearSessionBackup()
+      await cacheData(cacheKey, data)
+      return data as T
+    }
+    if (sessionData.user && shouldClearStoredSession(sessionData.sessionExpiresAt)) {
+      await clearSessionBackup()
+      return { user: null, sessionExpiresAt: null } as T
+    }
+    persistSessionBackup(sessionData)
+  }
+  if (cacheKey === PRODUCTS_CACHE_KEY) {
+    const previous = await getCachedData<{ products: ProductShape[] }>(PRODUCTS_CACHE_KEY)
+    const merged = await mergeProductsPreservingLocal(data, previous)
+    await cacheData(cacheKey, merged as T)
+    return merged as T
+  }
+
+  if (cacheKey === RETURN_RECEIPTS_CACHE_KEY) {
+    const previous = await getCachedData<{ receipts: CachedReceipt[] }>(RETURN_RECEIPTS_CACHE_KEY)
+    const merged = mergeReturnReceiptsPreservingLocal(data, previous)
+    await cacheData(cacheKey, merged as T)
+    return merged as T
+  }
+
+  if (cacheKey === SALE_RECEIPTS_CACHE_KEY) {
+    const previous = await getCachedData<{ receipts: CachedReceipt[] }>(SALE_RECEIPTS_CACHE_KEY)
+    const merged = mergeSaleReceiptsPreservingLocal(data, previous)
+    await cacheData(cacheKey, merged as T)
+    return merged as T
+  }
+
+  await cacheData(cacheKey, data)
+  return data
+}
+
+/**
+ * Changes applyOptimisticProductMutation can show on this device before the
+ * server confirms them. These always go through the outbox, so the till never
+ * waits on the network. Other changes (categories, account) have no local copy
+ * and are still sent straight away when online.
+ */
+function isLocalFirstMutation(input: { url: string; method: string }) {
+  if (input.method === "POST") {
+    return (
+      input.url === "/api/sales/batch" ||
+      input.url === "/api/products" ||
+      input.url === "/api/day-close" ||
+      parseAdjustProductIdFromUrl(input.url) !== null ||
+      parseReceiptPaymentUrl(input.url) !== null
+    )
+  }
+  return (
+    (input.method === "PATCH" || input.method === "DELETE") &&
+    parseProductIdFromUrl(input.url) !== null
+  )
 }
 
 export async function sendOrQueueMutation(input: {
@@ -1928,11 +2011,23 @@ export async function sendOrQueueMutation(input: {
   headers?: Record<string, string>
 }) {
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true
+  if (needsIdempotencyKey(input) && input.body && typeof input.body === "object") {
+    const payload = input.body as Record<string, unknown>
+    if (typeof payload._idempotencyKey !== "string") {
+      payload._idempotencyKey = crypto.randomUUID()
+    }
+  }
   const optimistic = await applyOptimisticProductMutation(input)
 
-  if (!isOnline) {
+  if (!isOnline || isLocalFirstMutation(input)) {
     await enqueueMutation({ ...input, tempId: optimistic.tempId })
-    return { queued: true as const, response: null }
+    return {
+      queued: true as const,
+      response: null,
+      /** Id of the local copy (receipt / product) shown until the server answers. */
+      localId: optimistic.tempId,
+      offline: !isOnline,
+    }
   }
 
   try {
@@ -1943,7 +2038,7 @@ export async function sendOrQueueMutation(input: {
         method: input.method,
         headers: mergeSyncHeaders(
           { url: input.url, method: input.method, headers: input.headers },
-          body
+          input.body
         ),
         credentials: "same-origin",
         body: body ? JSON.stringify(body) : undefined,
@@ -1978,59 +2073,6 @@ export async function sendOrQueueMutation(input: {
         return { queued: false as const, response, conflict: true as const }
       }
       return { queued: false as const, response }
-    }
-
-    if (input.url === "/api/sales/batch" && input.method === "POST") {
-      await applyBatchReceiptCacheResolution(
-        { url: input.url, method: input.method, body: input.body },
-        response
-      )
-    }
-
-    if (parseReceiptPaymentUrl(input.url) && input.method === "POST") {
-      await applyPaymentCacheResolution(
-        {
-          id: "live",
-          url: input.url,
-          method: input.method,
-          body: input.body,
-          headers: input.headers,
-          createdAt: Date.now(),
-          retryCount: 0,
-        },
-        response
-      )
-    }
-
-    if (input.url === "/api/day-close" && input.method === "POST") {
-      await applyDayCloseCacheResolution(
-        {
-          id: "live",
-          url: input.url,
-          method: input.method,
-          body: input.body,
-          headers: input.headers,
-          createdAt: Date.now(),
-          retryCount: 0,
-        },
-        response
-      )
-    }
-
-    if (input.url === "/api/products" && input.method === "POST" && optimistic.tempId) {
-      await applyCreateSyncResolution(
-        {
-          id: "live",
-          url: input.url,
-          method: input.method,
-          body: input.body,
-          headers: input.headers,
-          createdAt: Date.now(),
-          retryCount: 0,
-          tempId: optimistic.tempId,
-        },
-        response
-      )
     }
 
     scheduleDeltaSync("mutation")
@@ -2100,7 +2142,7 @@ async function runOfflineQueue(): Promise<SyncQueueResult> {
         mappedUrl,
         {
           method: mutation.method,
-          headers: mergeSyncHeaders({ ...mutation, url: mappedUrl }, mappedBody),
+          headers: mergeSyncHeaders({ ...mutation, url: mappedUrl }, mutation.body),
           credentials: "same-origin",
           body: mappedBody ? JSON.stringify(mappedBody) : undefined,
         },
@@ -2193,6 +2235,9 @@ async function runOfflineQueue(): Promise<SyncQueueResult> {
   }
 
   const result: SyncQueueResult = { synced, failed, conflicts, lastError, blockedBy }
+  if (synced > 0 || conflicts > 0) {
+    window.dispatchEvent(new CustomEvent(OFFLINE_QUEUE_CHANGED_EVENT))
+  }
   if (synced > 0) {
     notifySyncComplete(result)
     await runDeltaSync()

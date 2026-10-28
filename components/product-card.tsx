@@ -65,12 +65,13 @@ export function ProductCard({
     setIsAdjusting(true)
 
     try {
-      const { queued, response } = await sendOrQueueMutation({
+      const result = await sendOrQueueMutation({
         url: `/api/products/${product.id}/adjust`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: { adjustment: amount },
       })
+      const { queued, response } = result
 
       if (!queued && response && !response.ok) {
         setLocalQuantity(localQuantity)
@@ -84,7 +85,7 @@ export function ProductCard({
         return
       }
 
-      if (queued) {
+      if (queued && (!("offline" in result) || result.offline)) {
         toast({
           title: "Adjustment queued",
           description: "Stock update will sync when connection returns.",

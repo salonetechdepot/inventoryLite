@@ -1,9 +1,48 @@
 import { NextResponse } from 'next/server'
 import { getApiSession } from '@/lib/api-session'
-import { prisma } from '@/lib/prisma'
-import { moneySchema, parseJsonBody, validateRouteId } from '@/lib/api-validation'
+import { prisma, type Prisma } from '@/lib/prisma'
+import {
+  idempotencyKeyFromRequest,
+  moneySchema,
+  parseJsonBody,
+  validateRouteId,
+} from '@/lib/api-validation'
 import { describeDbError } from '@/lib/db-error'
+import {
+  findIdempotentResponse,
+  replayAfterUniqueConflict,
+  saveIdempotentResponse,
+} from '@/lib/server/idempotency'
 import { z } from 'zod'
+
+const IDEMPOTENCY_ROUTE = 'receipts.payments'
+
+const paymentReceiptInclude = {
+  sales: {
+    orderBy: { createdAt: 'asc' as const },
+    select: {
+      id: true,
+      productId: true,
+      productName: true,
+      quantitySold: true,
+      unitPriceAtSale: true,
+      totalAmount: true,
+      returnCondition: true,
+      returnDisposition: true,
+      createdAt: true,
+    },
+  },
+  payments: {
+    orderBy: { createdAt: 'asc' as const },
+    select: {
+      id: true,
+      amount: true,
+      method: true,
+      note: true,
+      createdAt: true,
+    },
+  },
+} satisfies Prisma.ReceiptInclude
 
 const paymentCreateSchema = z.object({
   amount: moneySchema.refine((amount) => amount > 0, 'Amount must be greater than zero'),
@@ -18,14 +57,20 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const idempotencyKey = idempotencyKeyFromRequest(request)
+  let tenantId: string | null = null
   try {
     const sessionResult = await getApiSession()
     if (sessionResult instanceof NextResponse) return sessionResult
     const session = sessionResult
+    tenantId = session.tenantId
 
     const { id } = await context.params
     const invalidId = validateRouteId(id)
     if (invalidId) return invalidId
+
+    const existing = await findIdempotentResponse(session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+    if (existing) return NextResponse.json(existing)
 
     const parsed = await parseJsonBody(request, paymentCreateSchema)
     if (!parsed.ok) return parsed.response
@@ -48,8 +93,6 @@ export async function POST(
 
       const currentPaid = Number(receipt.amountPaid)
       const currentDue = Number(receipt.amountDue)
-      const netAmount = Number(receipt.netAmount)
-
       // Cap the credited amount at the outstanding balance.
       const credited = Math.min(amountValue, currentDue)
       if (credited <= 0) {
@@ -81,32 +124,7 @@ export async function POST(
           isPartPayment: nowPaid ? false : true,
           updatedAt: new Date(),
         },
-        include: {
-          sales: {
-            orderBy: { createdAt: 'asc' },
-            select: {
-              id: true,
-              productId: true,
-              productName: true,
-              quantitySold: true,
-              unitPriceAtSale: true,
-              totalAmount: true,
-              returnCondition: true,
-              returnDisposition: true,
-              createdAt: true,
-            },
-          },
-          payments: {
-            orderBy: { createdAt: 'asc' },
-            select: {
-              id: true,
-              amount: true,
-              method: true,
-              note: true,
-              createdAt: true,
-            },
-          },
-        },
+        include: paymentReceiptInclude,
       })
 
       // Keep linked Sale rows aligned so legacy queries still report receipt totals.
@@ -120,12 +138,9 @@ export async function POST(
         },
       })
 
-      return {
-        receipt: updated,
-        credited,
-        overflow,
-        netAmount,
-      }
+      const responseJson = paymentResponse(updated, credited, overflow)
+      await saveIdempotentResponse(tx, session.tenantId, IDEMPOTENCY_ROUTE, idempotencyKey, responseJson)
+      return { responseJson }
     })
 
     if ('notFound' in result && result.notFound) {
@@ -135,57 +150,68 @@ export async function POST(
       return NextResponse.json({ error: result.reason || 'Not allowed' }, { status: 400 })
     }
 
-    if (!('receipt' in result)) {
+    if (!('responseJson' in result)) {
       return NextResponse.json({ error: 'Failed to record payment' }, { status: 500 })
     }
 
-    const receipt = result.receipt
-    return NextResponse.json({
-      success: true,
-      credited: result.credited,
-      change: result.overflow,
-      receipt: {
-        id: receipt.id,
-        type: receipt.type,
-        customer_name: receipt.customerName,
-        customer_phone: receipt.customerPhone,
-        subtotal: Number(receipt.subtotal),
-        discount_amount: Number(receipt.discountAmount),
-        net_amount: Number(receipt.netAmount),
-        amount_paid: Number(receipt.amountPaid),
-        amount_due: Number(receipt.amountDue),
-        change_given: Number(receipt.changeGiven),
-        is_part_payment: receipt.isPartPayment,
-        is_paid: receipt.isPaid,
-        notes: receipt.notes,
-        created_at: receipt.createdAt,
-        updated_at: receipt.updatedAt,
-        item_count: receipt.sales.length,
-        sales: receipt.sales.map((sale) => ({
-          id: sale.id,
-          product_id: sale.productId,
-          product_name: sale.productName,
-          quantity_sold: sale.quantitySold,
-          unit_price_at_sale: Number(sale.unitPriceAtSale),
-          total_amount: Number(sale.totalAmount),
-          return_condition: sale.returnCondition,
-          return_disposition: sale.returnDisposition,
-          created_at: sale.createdAt,
-        })),
-        payments: receipt.payments.map((p) => ({
-          id: p.id,
-          amount: Number(p.amount),
-          method: p.method,
-          note: p.note,
-          created_at: p.createdAt,
-        })),
-      },
-    })
+    return NextResponse.json(result.responseJson)
   } catch (error) {
+    if (tenantId) {
+      const replay = await replayAfterUniqueConflict(error, tenantId, IDEMPOTENCY_ROUTE, idempotencyKey)
+      if (replay) return NextResponse.json(replay)
+    }
     console.error('Add payment error:', error)
     return NextResponse.json(
       { error: describeDbError(error, 'Could not record this payment') },
       { status: 500 }
     )
+  }
+}
+
+function paymentResponse(
+  receipt: Prisma.ReceiptGetPayload<{ include: typeof paymentReceiptInclude }>,
+  credited: number,
+  overflow: number
+) {
+  return {
+    success: true,
+    credited,
+    change: overflow,
+    receipt: {
+      id: receipt.id,
+      type: receipt.type,
+      customer_name: receipt.customerName,
+      customer_phone: receipt.customerPhone,
+      subtotal: Number(receipt.subtotal),
+      discount_amount: Number(receipt.discountAmount),
+      net_amount: Number(receipt.netAmount),
+      amount_paid: Number(receipt.amountPaid),
+      amount_due: Number(receipt.amountDue),
+      change_given: Number(receipt.changeGiven),
+      is_part_payment: receipt.isPartPayment,
+      is_paid: receipt.isPaid,
+      notes: receipt.notes,
+      created_at: receipt.createdAt,
+      updated_at: receipt.updatedAt,
+      item_count: receipt.sales.length,
+      sales: receipt.sales.map((sale) => ({
+        id: sale.id,
+        product_id: sale.productId,
+        product_name: sale.productName,
+        quantity_sold: sale.quantitySold,
+        unit_price_at_sale: Number(sale.unitPriceAtSale),
+        total_amount: Number(sale.totalAmount),
+        return_condition: sale.returnCondition,
+        return_disposition: sale.returnDisposition,
+        created_at: sale.createdAt,
+      })),
+      payments: receipt.payments.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        method: p.method,
+        note: p.note,
+        created_at: p.createdAt,
+      })),
+    },
   }
 }
